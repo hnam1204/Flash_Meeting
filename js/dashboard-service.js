@@ -1,7 +1,7 @@
-import { getMockSession } from './auth-service.js';
+import { getMockSession, MOCK_USER_ID } from './auth-service.js';
 
 const MOCK_USER = Object.freeze({
-  id: 'user-demo-001',
+  id: MOCK_USER_ID,
   displayName: 'Nguyễn Hải Nam',
   email: 'demo@flashmeeting.app',
   avatarUrl: null

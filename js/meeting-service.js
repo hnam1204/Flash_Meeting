@@ -1,9 +1,15 @@
+import { getMockSession, MOCK_USER_ID } from './auth-service.js';
 import { isLikelyRoomCode, normalizeRoomCode } from './utils.js';
 
 export const MAX_MEETING_PARTICIPANTS = 50;
 export const DEFAULT_MEETING_PARTICIPANTS = MAX_MEETING_PARTICIPANTS;
 export const MEETING_TITLE_MAX_LENGTH = 100;
 export const SUPPORTED_ACCESS_MODE = 'link';
+export const PARTICIPANT_ROLES = Object.freeze({
+  HOST: 'host',
+  CO_HOST: 'co-host',
+  MEMBER: 'member'
+});
 
 export const CREATE_MEETING_ERROR_CODES = Object.freeze({
   AUTH_REQUIRED: 'AUTH_REQUIRED',
@@ -28,6 +34,15 @@ export const JOIN_MEETING_ERROR_CODES = Object.freeze({
   RATE_LIMITED: 'RATE_LIMITED',
   SERVICE_UNAVAILABLE: 'SERVICE_UNAVAILABLE',
   JOIN_FAILED: 'JOIN_FAILED'
+});
+
+export const ADMISSION_DESTINATIONS = Object.freeze({
+  MEETING: 'meeting',
+  WAITING_ROOM: 'waiting-room',
+  ROOM_FULL: 'room-full',
+  ENDED: 'ended',
+  BLOCKED: 'blocked',
+  NOT_FOUND: 'not-found'
 });
 
 const MOCK_DELAY = 620;
@@ -123,7 +138,16 @@ export async function createMeeting(input) {
       status: 'scheduled',
       accessMode: validation.input.accessMode,
       maxParticipants: validation.input.maxParticipants,
-      waitingRoomEnabled: validation.input.waitingRoomEnabled
+      waitingRoomEnabled: validation.input.waitingRoomEnabled,
+      hostId: getCurrentUser().id,
+      hostName: getCurrentUser().displayName,
+      participantCount: 1
+    },
+    participant: {
+      userId: getCurrentUser().id,
+      role: PARTICIPANT_ROLES.HOST,
+      status: 'admitted',
+      displayName: getCurrentUser().displayName
     }
   };
 }
@@ -133,6 +157,7 @@ const MOCK_JOIN_MEETINGS = Object.freeze({
     id: 'mock-meeting-abc-123-xyz',
     title: 'Cuộc họp nhóm sản phẩm',
     hostName: 'Nguyễn Hải Nam',
+    hostId: 'mock-host-abc-123-xyz',
     status: 'active',
     waitingRoomEnabled: false,
     maxParticipants: MAX_MEETING_PARTICIPANTS,
@@ -142,6 +167,7 @@ const MOCK_JOIN_MEETINGS = Object.freeze({
     id: 'mock-meeting-flash-101',
     title: 'Weekly Flash Meeting',
     hostName: 'Nguyễn Hải Nam',
+    hostId: 'mock-host-flash-101',
     status: 'active',
     waitingRoomEnabled: true,
     maxParticipants: MAX_MEETING_PARTICIPANTS,
@@ -150,14 +176,28 @@ const MOCK_JOIN_MEETINGS = Object.freeze({
   'DESIGN-204': {
     id: 'mock-meeting-design-204',
     title: 'Design review',
+    hostName: 'Linh Trần',
+    hostId: 'mock-host-design-204',
     status: 'active',
     waitingRoomEnabled: false,
     maxParticipants: 20,
     participantCount: 6
   },
+  'COHOST-123': {
+    id: 'mock-meeting-cohost-123',
+    title: 'Cuộc họp có Co-host',
+    hostName: 'Linh Trần',
+    hostId: 'mock-host-cohost-123',
+    status: 'active',
+    waitingRoomEnabled: true,
+    maxParticipants: MAX_MEETING_PARTICIPANTS,
+    participantCount: 4
+  },
   'ENDED-123': {
     id: 'mock-meeting-ended-123',
     title: 'Cuộc họp đã kết thúc',
+    hostName: 'Linh Trần',
+    hostId: 'mock-host-ended-123',
     status: 'ended',
     waitingRoomEnabled: false,
     maxParticipants: MAX_MEETING_PARTICIPANTS,
@@ -166,6 +206,8 @@ const MOCK_JOIN_MEETINGS = Object.freeze({
   'CANCEL-123': {
     id: 'mock-meeting-cancel-123',
     title: 'Cuộc họp đã hủy',
+    hostName: 'Linh Trần',
+    hostId: 'mock-host-cancel-123',
     status: 'cancelled',
     waitingRoomEnabled: false,
     maxParticipants: MAX_MEETING_PARTICIPANTS,
@@ -174,6 +216,8 @@ const MOCK_JOIN_MEETINGS = Object.freeze({
   'LOCKED-123': {
     id: 'mock-meeting-locked-123',
     title: 'Cuộc họp đang khóa',
+    hostName: 'Linh Trần',
+    hostId: 'mock-host-locked-123',
     status: 'locked',
     waitingRoomEnabled: false,
     maxParticipants: MAX_MEETING_PARTICIPANTS,
@@ -182,6 +226,8 @@ const MOCK_JOIN_MEETINGS = Object.freeze({
   'FULL-123': {
     id: 'mock-meeting-full-123',
     title: 'Cuộc họp đã đủ người',
+    hostName: 'Linh Trần',
+    hostId: 'mock-host-full-123',
     status: 'active',
     waitingRoomEnabled: false,
     maxParticipants: MAX_MEETING_PARTICIPANTS,
@@ -190,12 +236,84 @@ const MOCK_JOIN_MEETINGS = Object.freeze({
   'BLOCKED-123': {
     id: 'mock-meeting-blocked-123',
     title: 'Cuộc họp giới hạn người tham gia',
+    hostName: 'Linh Trần',
+    hostId: 'mock-host-blocked-123',
     status: 'active',
     waitingRoomEnabled: false,
     maxParticipants: MAX_MEETING_PARTICIPANTS,
     participantCount: 10
   }
 });
+
+const MOCK_ESTABLISHED_PARTICIPANTS = Object.freeze({
+  'COHOST-123': Object.freeze({
+    [MOCK_USER_ID]: Object.freeze({
+      userId: MOCK_USER_ID,
+      role: PARTICIPANT_ROLES.CO_HOST,
+      status: 'admitted'
+    })
+  })
+});
+
+function getCurrentUser() {
+  const session = getMockSession();
+  return {
+    id: session?.id || MOCK_USER_ID,
+    displayName: String(session?.displayName || 'Nguyễn Hải Nam').trim() || 'Nguyễn Hải Nam'
+  };
+}
+
+function getStoredParticipant(roomCode) {
+  return MOCK_ESTABLISHED_PARTICIPANTS[roomCode]?.[getCurrentUser().id] || null;
+}
+
+export function getCurrentParticipantContext(roomCode, meetingInput = null) {
+  const normalizedRoomCode = normalizeRoomCode(roomCode);
+  const meeting = meetingInput || getJoinMeeting(normalizedRoomCode);
+  if (!meeting) {
+    return {
+      meeting: null,
+      participant: null,
+      role: null,
+      isHost: false,
+      isCoHost: false,
+      isMember: false,
+      requiresWaitingRoom: false
+    };
+  }
+
+  const currentUser = getCurrentUser();
+  const establishedParticipant = getStoredParticipant(normalizedRoomCode);
+  const participant = meeting.hostId && meeting.hostId === currentUser.id
+    ? { userId: currentUser.id, role: PARTICIPANT_ROLES.HOST, status: 'admitted' }
+    : establishedParticipant
+      ? { ...establishedParticipant }
+      : { userId: currentUser.id, role: PARTICIPANT_ROLES.MEMBER, status: 'pending' };
+  const isHost = participant.role === PARTICIPANT_ROLES.HOST;
+  const isCoHost = participant.role === PARTICIPANT_ROLES.CO_HOST;
+
+  return {
+    meeting,
+    participant,
+    role: participant.role,
+    isHost,
+    isCoHost,
+    isMember: participant.role === PARTICIPANT_ROLES.MEMBER,
+    requiresWaitingRoom: Boolean(meeting.waitingRoomEnabled && !isHost && !isCoHost)
+  };
+}
+
+export function getAdmissionDestination(context = {}) {
+  const meeting = context.meeting;
+  if (!meeting) return ADMISSION_DESTINATIONS.NOT_FOUND;
+  if (meeting.status === 'ended' || meeting.status === 'cancelled') return ADMISSION_DESTINATIONS.ENDED;
+  if (meeting.status === 'locked') return ADMISSION_DESTINATIONS.BLOCKED;
+  if (context.isHost || context.isCoHost) return ADMISSION_DESTINATIONS.MEETING;
+  if (Number(meeting.participantCount ?? 0) >= Number(meeting.maxParticipants ?? MAX_MEETING_PARTICIPANTS)) {
+    return ADMISSION_DESTINATIONS.ROOM_FULL;
+  }
+  return context.requiresWaitingRoom ? ADMISSION_DESTINATIONS.WAITING_ROOM : ADMISSION_DESTINATIONS.MEETING;
+}
 
 function getJoinErrorScenario() {
   return String(new URLSearchParams(window.location.search).get('mock') ?? '').toLowerCase();
@@ -307,16 +425,39 @@ export async function getWaitingRoom(input) {
   const meeting = getJoinMeeting(roomCode);
   if (!meeting) return { success: false, code: JOIN_MEETING_ERROR_CODES.MEETING_NOT_FOUND };
 
+  const participantContext = getCurrentParticipantContext(roomCode, meeting);
+  // SECURITY: Host/Co-host bypass is based on mock frontend state in this phase.
+  // Production role/admission must be verified by trusted backend logic.
+  if (participantContext.isHost || participantContext.isCoHost) {
+    return {
+      success: true,
+      meeting,
+      participant: participantContext.participant,
+      participantContext,
+      destination: ADMISSION_DESTINATIONS.MEETING,
+      request: null
+    };
+  }
+
   const storedRequest = readWaitingRequest();
   const request = createWaitingRequest(meeting, input?.displayName, storedRequest);
   const scenarioStatus = getWaitingScenarioStatus(scenario, meeting);
   if (scenarioStatus) request.status = scenarioStatus;
   if (!storedRequest || storedRequest.roomCode !== roomCode || scenarioStatus) writeWaitingRequest(request);
 
-  return { success: true, meeting, request };
+  return {
+    success: true,
+    meeting,
+    request,
+    participant: participantContext.participant,
+    participantContext,
+    destination: ADMISSION_DESTINATIONS.WAITING_ROOM
+  };
 }
 
 export function watchWaitingRequest({ roomCode, status, onChange, onError } = {}) {
+  const participantContext = getCurrentParticipantContext(roomCode);
+  if (participantContext.isHost || participantContext.isCoHost) return () => {};
   const scenario = getMockScenario();
   if (status !== WAITING_REQUEST_STATUSES.WAITING && status !== 'reconnecting') return () => {};
 
@@ -404,21 +545,39 @@ export async function resolveMeetingForJoin(input) {
   if (meeting.status === 'cancelled') return { success: false, code: JOIN_MEETING_ERROR_CODES.MEETING_CANCELLED };
   if (meeting.status === 'locked') return { success: false, code: JOIN_MEETING_ERROR_CODES.MEETING_LOCKED };
   if (roomCode === 'BLOCKED-123') return { success: false, code: JOIN_MEETING_ERROR_CODES.USER_BLOCKED };
-  if (meeting.participantCount >= Number(meeting.maxParticipants ?? MAX_MEETING_PARTICIPANTS)) {
+  const participantContext = getCurrentParticipantContext(roomCode, meeting);
+  if (!participantContext.isHost && !participantContext.isCoHost
+    && meeting.participantCount >= Number(meeting.maxParticipants ?? MAX_MEETING_PARTICIPANTS)) {
     return { success: false, code: JOIN_MEETING_ERROR_CODES.ROOM_FULL };
   }
 
   const displayName = String(input?.displayName ?? '').trim() || 'Khách tham gia';
+  const destination = getAdmissionDestination(participantContext);
+  const participant = {
+    ...participantContext.participant,
+    displayName,
+    status: destination === ADMISSION_DESTINATIONS.WAITING_ROOM ? 'waiting' : 'admitted'
+  };
   return {
     success: true,
     meeting,
-    participant: { displayName }
+    participant,
+    participantContext: {
+      ...participantContext,
+      meeting,
+      participant,
+      requiresWaitingRoom: destination === ADMISSION_DESTINATIONS.WAITING_ROOM
+    },
+    destination,
+    requiresWaitingRoom: destination === ADMISSION_DESTINATIONS.WAITING_ROOM
   };
 }
 
 export const meetingService = Object.freeze({
   create: createMeeting,
   resolveForJoin: resolveMeetingForJoin,
+  getCurrentParticipantContext,
+  getAdmissionDestination,
   getWaitingRoom,
   watchWaitingRequest,
   updateWaitingRequestStatus,

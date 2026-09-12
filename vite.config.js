@@ -11,6 +11,8 @@ function normalizeBasePath(value) {
 
 export default defineConfig({
   base: normalizeBasePath(process.env.VITE_BASE_PATH),
+  // Support the existing local NEXT_PUBLIC_* naming without exposing server-only env names.
+  envPrefix: ['VITE_', 'NEXT_PUBLIC_'],
   build: {
     rollupOptions: {
       input: {

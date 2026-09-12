@@ -60,6 +60,8 @@ const waitingActions = document.querySelector('[data-waiting-actions]');
 const resultActions = document.querySelector('[data-result-actions]');
 const checkDevicesLink = document.querySelector('[data-check-devices]');
 const retryLink = document.querySelector('[data-retry]');
+const homeLink = document.querySelector('[data-home-link]');
+const joinAnotherLink = document.querySelector('[data-join-another-link]');
 const loginLink = document.querySelector('[data-login-link]');
 const leaveButton = document.querySelector('[data-leave-waiting]');
 
@@ -67,6 +69,7 @@ const state = {
   status: WAITING_STATES.INITIALIZING,
   roomCode: '',
   meeting: null,
+  participantContext: null,
   request: null,
   unsubscribe: null,
   joinTimer: 0,
@@ -119,6 +122,10 @@ function setLoginLink() {
   loginLink.href = url.href;
 }
 
+function setJoinAnotherLink() {
+  if (joinAnotherLink) joinAnotherLink.href = getPageUrl('join-meeting.html');
+}
+
 function renderMeetingContext() {
   if (!state.meeting) {
     context.hidden = true;
@@ -141,14 +148,18 @@ function setActions(nextStatus) {
     WAITING_STATES.SESSION_EXPIRED,
     WAITING_STATES.INVALID
   ].includes(nextStatus);
+  const canJoinAnother = [WAITING_STATES.REJECTED, WAITING_STATES.ROOM_FULL].includes(nextStatus);
 
   waitingActions.hidden = !canWait;
   resultActions.hidden = !canShowResultActions;
   retryLink.hidden = nextStatus !== WAITING_STATES.NETWORK_ERROR;
+  homeLink.hidden = !canShowResultActions;
+  joinAnotherLink.hidden = !canJoinAnother;
   loginLink.hidden = nextStatus !== WAITING_STATES.SESSION_EXPIRED;
   leaveButton.disabled = nextStatus === WAITING_STATES.RECONNECTING ? false : nextStatus !== WAITING_STATES.WAITING;
   setPrejoinLink();
   setLoginLink();
+  setJoinAnotherLink();
 }
 
 function setState(nextStatus, note = '') {
@@ -271,6 +282,7 @@ async function initialize() {
   state.roomCode = getRoomCode();
   state.meeting = null;
   state.request = null;
+  state.participantContext = null;
   state.leaving = false;
   setState(WAITING_STATES.INITIALIZING);
 
@@ -290,6 +302,13 @@ async function initialize() {
 
   state.meeting = result.meeting;
   state.request = result.request;
+  state.participantContext = result.participantContext;
+
+  if (state.participantContext?.isHost || state.participantContext?.isCoHost) {
+    navigateToMeeting();
+    return;
+  }
+
   renderMeetingContext();
 
   if (result.request.status === 'approved') {

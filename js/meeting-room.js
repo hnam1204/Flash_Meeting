@@ -23,6 +23,7 @@ import {
   stopMockRemoteShare,
   subscribeScreenShare
 } from './meeting-screen-share.js';
+import { meetingService } from './meeting-service.js';
 import { getPageUrl } from './utils.js';
 
 const MAX_PARTICIPANTS = 50;
@@ -41,12 +42,8 @@ const names = [
 ];
 
 const scenario = String(new URLSearchParams(window.location.search).get('mock') ?? '').toLowerCase();
-const roleQuery = new URLSearchParams(window.location.search).get('role');
-const role = scenario === 'host' || roleQuery === 'host'
-  ? PARTICIPANT_ROLES.HOST
-  : scenario === 'cohost' || roleQuery === 'cohost'
-    ? PARTICIPANT_ROLES.CO_HOST
-    : PARTICIPANT_ROLES.MEMBER;
+const meetingContext = meetingService.getCurrentParticipantContext(getRoomCode());
+const role = meetingContext.role || PARTICIPANT_ROLES.MEMBER;
 const media = createMediaController();
 const page = document.body;
 const app = document.querySelector('.meeting-app');
@@ -62,7 +59,7 @@ const state = {
   roomCode: getRoomCode(),
   meetingTitle: getMeetingTitle(),
   displayName: getStoredDisplayName(),
-  hostName: 'Nguyễn Hải Nam',
+  hostName: meetingContext.meeting?.hostName || 'Nguyễn Hải Nam',
   startedAt: getStartedAt(),
   role,
   panel: null,

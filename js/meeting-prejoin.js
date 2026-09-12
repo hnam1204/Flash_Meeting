@@ -58,6 +58,7 @@ const microphoneToggle = document.querySelector('[data-media-toggle="microphone"
 const state = {
   roomCode: '',
   meeting: null,
+  participantContext: null,
   mediaStream: null,
   selectedCameraId: '',
   selectedMicrophoneId: '',
@@ -219,6 +220,13 @@ function setMeetingSummary(meeting) {
   meetingTitle.textContent = meeting.title || 'Cuộc họp FLASH MEETING';
   meetingMeta.textContent = `Mã phòng: ${meeting.roomCode}`;
   meetingSummary.hidden = false;
+}
+
+function updateAdmissionCopy() {
+  const isPrivilegedParticipant = Boolean(
+    state.participantContext?.isHost || state.participantContext?.isCoHost
+  );
+  submitLabel.textContent = isPrivilegedParticipant ? 'Bắt đầu cuộc họp' : 'Tham gia cuộc họp';
 }
 
 function replaceTrack(kind, nextStream) {
@@ -477,7 +485,10 @@ async function loadMeeting() {
   }
 
   state.meeting = result.meeting;
+  state.participantContext = result.participantContext
+    || meetingService.getCurrentParticipantContext(state.roomCode, result.meeting);
   setMeetingSummary(result.meeting);
+  updateAdmissionCopy();
   return true;
 }
 
@@ -510,6 +521,8 @@ async function handleSubmit(event) {
   }
 
   state.meeting = result.meeting;
+  state.participantContext = result.participantContext
+    || meetingService.getCurrentParticipantContext(state.roomCode, result.meeting);
   setPrejoinState(PREJOIN_STATES.SUCCESS);
   setStatusMessage('Đã sẵn sàng. Đang mở cuộc họp…', 'success');
   sessionStorage.setItem('flashMeeting.roomCode', result.meeting.roomCode);
@@ -517,7 +530,8 @@ async function handleSubmit(event) {
   sessionStorage.setItem('flashMeeting.joinedMeeting', JSON.stringify(result.meeting));
   cleanupMedia();
 
-  const nextPage = result.meeting.waitingRoomEnabled ? 'waiting-room.html' : 'meeting.html';
+  const destination = meetingService.getAdmissionDestination(state.participantContext);
+  const nextPage = destination === 'waiting-room' ? 'waiting-room.html' : 'meeting.html';
   await wait(REDIRECT_DELAY);
   window.location.href = `${getPageUrl(nextPage)}?room=${encodeURIComponent(result.meeting.roomCode)}`;
 }

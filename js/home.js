@@ -6,10 +6,13 @@ const page = document.body;
 const statusBar = document.querySelector('[data-dashboard-status]');
 const activeList = document.querySelector('[data-active-list]');
 const activeEmpty = document.querySelector('[data-active-empty]');
+const activeSection = document.querySelector('.active-section');
 const upcomingList = document.querySelector('[data-upcoming-list]');
 const recentList = document.querySelector('[data-recent-list]');
 const upcomingEmpty = document.querySelector('[data-upcoming-empty]');
 const recentEmpty = document.querySelector('[data-recent-empty]');
+const upcomingSection = document.querySelector('.upcoming-section');
+const recentSection = document.querySelector('.recent-section');
 const toast = document.querySelector('[data-toast]');
 const notificationPanel = document.querySelector('[data-notification-panel]');
 const profilePanel = document.querySelector('[data-profile-panel]');
@@ -62,6 +65,12 @@ function clearStatus() {
   statusBar.textContent = '';
 }
 
+function setSectionState(section, state) {
+  if (!section) return;
+  section.dataset.sectionState = state;
+  section.setAttribute('aria-busy', String(state === 'loading'));
+}
+
 function showToast(message, type = 'info') {
   window.clearTimeout(toastTimer);
   toast.hidden = false;
@@ -92,11 +101,13 @@ function togglePanel(panel, trigger) {
 }
 
 function renderProfile(user) {
-  const initials = user.displayName.split(' ').map((part) => part[0]).slice(-2).join('').toUpperCase();
-  document.querySelectorAll('[data-profile-name]').forEach((node) => { node.textContent = user.displayName; });
+  const displayName = String(user?.displayName || 'Người dùng FLASH MEETING').trim();
+  const email = String(user?.email || '').trim();
+  const initials = displayName.split(/\s+/).map((part) => part[0]).slice(-2).join('').toUpperCase();
+  document.querySelectorAll('[data-profile-name]').forEach((node) => { node.textContent = displayName; });
   document.querySelectorAll('[data-profile-avatar]').forEach((node) => { node.textContent = initials; });
-  document.querySelector('[data-profile-email]').textContent = user.email;
-  document.querySelector('[data-greeting-name]').textContent = user.displayName.split(' ')[0];
+  document.querySelector('[data-profile-email]').textContent = email;
+  document.querySelector('[data-greeting-name]').textContent = displayName.split(/\s+/)[0];
 }
 
 function renderNotifications(notifications) {
@@ -122,45 +133,66 @@ function renderNotifications(notifications) {
 
 function renderActive(meetings) {
   activeList.textContent = '';
-  activeEmpty.hidden = meetings.length !== 0;
-  meetings.forEach((meeting) => activeList.append(createMeetingCard(meeting)));
+  activeEmpty.hidden = meetings.length > 0;
+  setSectionState(activeSection, meetings.length > 0 ? 'ready' : 'empty');
+  meetings.forEach((meeting) => activeList.append(createMeetingCard(meeting, 'active')));
 }
 
-function createMeetingCard(meeting) {
+function createMeetingCard(meeting, variant = 'upcoming') {
+  if (variant === 'active') {
+    const article = document.createElement('article');
+    article.className = 'dashboard-meeting-card active-meeting-card';
+    const info = document.createElement('div');
+    info.className = 'active-meeting-info';
+    const title = document.createElement('h3');
+    title.textContent = meeting.title || 'Cuộc họp FLASH MEETING';
+    const meta = document.createElement('div');
+    meta.className = 'active-meeting-meta';
+    const time = document.createElement('span');
+    time.textContent = `${meeting.displayTime || 'Đang diễn ra'} · ${meeting.participantCount ?? 0} người`;
+    const room = document.createElement('span');
+    room.className = 'meeting-card-room';
+    room.textContent = meeting.roomCode || '';
+    meta.append(time, room);
+    info.append(title, meta);
+
+    const action = document.createElement('a');
+    action.className = 'meeting-action';
+    action.href = `${getPageUrl('prejoin.html')}?room=${encodeURIComponent(meeting.roomCode || '')}`;
+    action.textContent = 'Tham gia ngay';
+    article.append(info, action);
+    return article;
+  }
+
   const article = document.createElement('article');
-  article.className = 'meeting-card-dashboard';
+  article.className = 'dashboard-meeting-card upcoming-meeting-card';
   const top = document.createElement('div');
   top.className = 'meeting-card-top';
   const title = document.createElement('h3');
-  title.textContent = meeting.title;
-  const status = document.createElement('span');
-  status.className = `meeting-status ${meeting.status}`;
-  const statusDot = document.createElement('span');
-  statusDot.className = 'status-dot';
-  statusDot.setAttribute('aria-hidden', 'true');
-  status.append(statusDot, document.createTextNode(STATUS_LABELS[meeting.status]));
-  top.append(title, status);
+  title.textContent = meeting.title || 'Cuộc họp FLASH MEETING';
+  top.append(title);
 
   const meta = document.createElement('div');
   meta.className = 'meeting-card-meta';
   const date = document.createElement('span');
-  date.textContent = `◷ ${meeting.displayDate}`;
+  date.textContent = `${meeting.displayDate || 'Chưa có ngày'} · ${meeting.displayTime || 'Chưa có giờ'}`;
   const time = document.createElement('span');
-  time.textContent = `◌ ${meeting.displayTime}`;
+  time.className = 'meeting-card-room';
+  time.textContent = meeting.roomCode || '';
   meta.append(date, time);
 
   const footer = document.createElement('div');
   footer.className = 'meeting-card-footer';
   const participants = document.createElement('span');
   participants.className = 'meeting-participants';
-  participants.textContent = `${meeting.participantCount} người · ${meeting.roomCode}`;
+  participants.textContent = `${meeting.participantCount ?? 0} người`;
   footer.append(participants);
 
   if (meeting.status !== 'ended' && meeting.status !== 'cancelled') {
     const action = document.createElement('a');
     action.className = 'meeting-action';
-    action.href = `${getPageUrl('prejoin.html')}?room=${encodeURIComponent(meeting.roomCode)}`;
-    action.textContent = meeting.status === 'active' ? 'Tham gia ngay' : 'Tham gia';
+    action.href = `${getPageUrl('prejoin.html')}?room=${encodeURIComponent(meeting.roomCode || '')}`;
+    action.textContent = 'Tham gia';
     footer.append(action);
   } else {
     const action = document.createElement('button');
@@ -178,9 +210,10 @@ function createMeetingCard(meeting) {
 function renderUpcoming(meetings, errorMessage = '') {
   upcomingList.textContent = '';
   upcomingEmpty.hidden = meetings.length !== 0 || Boolean(errorMessage);
+  setSectionState(upcomingSection, errorMessage ? 'error' : meetings.length > 0 ? 'ready' : 'empty');
   if (errorMessage) {
     const error = document.createElement('div');
-    error.className = 'section-empty';
+    error.className = 'section-empty section-error';
     const message = document.createElement('strong');
     message.textContent = errorMessage;
     const retry = document.createElement('button');
@@ -192,12 +225,13 @@ function renderUpcoming(meetings, errorMessage = '') {
     upcomingList.append(error);
     return;
   }
-  meetings.forEach((meeting) => upcomingList.append(createMeetingCard(meeting)));
+  meetings.forEach((meeting) => upcomingList.append(createMeetingCard(meeting, 'upcoming')));
 }
 
 function renderRecent(meetings) {
   recentList.textContent = '';
   recentEmpty.hidden = meetings.length !== 0;
+  setSectionState(recentSection, meetings.length > 0 ? 'ready' : 'empty');
   meetings.forEach((meeting) => {
     const item = document.createElement('article');
     item.className = 'recent-item';
@@ -243,34 +277,38 @@ function renderSkeletons() {
   upcomingList.textContent = '';
   recentList.textContent = '';
   const activeSkeleton = document.createElement('article');
-  activeSkeleton.className = 'meeting-card-dashboard is-skeleton';
+  activeSkeleton.className = 'dashboard-meeting-card active-meeting-card is-skeleton';
   activeList.append(activeSkeleton);
   for (let index = 0; index < 3; index += 1) {
     const skeleton = document.createElement('article');
-    skeleton.className = 'meeting-card-dashboard is-skeleton';
+    skeleton.className = 'dashboard-meeting-card upcoming-meeting-card is-skeleton';
     upcomingList.append(skeleton);
   }
   const recentSkeleton = document.createElement('div');
-  recentSkeleton.className = 'meeting-card-dashboard is-skeleton';
+  recentSkeleton.className = 'dashboard-meeting-card is-skeleton';
   recentSkeleton.style.minHeight = '130px';
   recentList.append(recentSkeleton);
   upcomingEmpty.hidden = true;
   activeEmpty.hidden = true;
   recentEmpty.hidden = true;
+  setSectionState(activeSection, 'loading');
+  setSectionState(upcomingSection, 'loading');
+  setSectionState(recentSection, 'loading');
 }
 
 function renderDashboard(data) {
+  const errors = data.errors || {};
   renderProfile(data.user);
   renderNotifications(data.notifications);
   renderActive(data.activeMeetings);
-  renderUpcoming(data.upcomingMeetings, data.errors.upcoming);
+  renderUpcoming(data.upcomingMeetings, errors.upcoming);
   renderRecent(data.recentMeetings);
   document.querySelector('[data-unread-count]').textContent = String(data.unreadNotifications);
   document.querySelector('[data-notification-trigger]').setAttribute('aria-label', `Thông báo, ${data.unreadNotifications} thông báo chưa đọc`);
   if (data.offline) {
     showStatus('Bạn đang ngoại tuyến. Một số dữ liệu có thể chưa được cập nhật.', 'info');
     setDashboardState('offline');
-  } else if (Object.keys(data.errors).length) {
+  } else if (Object.keys(errors).length) {
     showStatus('Một số dữ liệu chưa thể tải. Các phần còn lại vẫn sẵn sàng.', 'error', 'Thử lại', () => initializeDashboard());
     setDashboardState('partial_error');
   } else {

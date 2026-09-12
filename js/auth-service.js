@@ -1,6 +1,7 @@
 import { getPageUrl } from './utils.js';
 
 export const MOCK_SESSION_KEY = 'flashMeeting.mockSession';
+export const MOCK_USER_ID = 'user-demo-001';
 
 export const AUTH_ERROR_CODES = Object.freeze({
   INVALID_CREDENTIALS: 'INVALID_CREDENTIALS',
@@ -38,6 +39,7 @@ function getMockScenario() {
 
 function createSession(provider, email, remember) {
   const session = {
+    id: MOCK_USER_ID,
     provider,
     email,
     displayName: provider === 'google' ? 'Google Guest' : 'Nguyễn Hải Nam',
@@ -57,7 +59,7 @@ export function getMockSession() {
 
     try {
       const session = JSON.parse(storedSession);
-      if (session?.expiresAt > Date.now()) return session;
+      if (session?.expiresAt > Date.now()) return { ...session, id: session.id || MOCK_USER_ID };
     } catch {
       storage.removeItem(MOCK_SESSION_KEY);
       continue;
