@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Đăng nhập vào FLASH MEETING." />
+    <title>FLASH MEETING — Đăng nhập</title>
+    <link rel="stylesheet" href="./css/base.css" />
+    <link rel="stylesheet" href="./css/auth.css" />
+  </head>
+  <body class="auth-page" data-auth-mode="login" data-auth-state="initializing">
+    <main class="auth-shell">
+      <a class="brand auth-brand" href="index.html" aria-label="FLASH MEETING trang chủ">
+        <span class="brand-mark" aria-hidden="true">F</span>
+        <span>FLASH<span class="brand-accent">MEETING</span></span>
+      </a>
+
+      <section class="auth-card" aria-labelledby="login-title">
+        <header class="auth-card-header">
+          <p class="auth-kicker">Welcome back</p>
+          <h1 id="login-title">Đăng nhập</h1>
+          <p>Tiếp tục đến không gian họp của bạn.</p>
+        </header>
+
+        <div class="auth-loading" data-auth-loading role="status" aria-live="polite">
+          <span class="loading-spinner" aria-hidden="true"></span>
+          <span>Đang kiểm tra phiên đăng nhập…</span>
+        </div>
+
+        <form class="auth-form" data-auth-form novalidate aria-busy="true">
+          <div class="auth-field">
+            <label for="email">Email</label>
+            <div class="auth-input-shell">
+              <input id="email" name="email" type="email" autocomplete="email" placeholder="you@company.com" aria-describedby="email-error auth-status" required />
+            </div>
+            <p class="field-error" data-field-error="email" id="email-error" aria-live="polite"></p>
+          </div>
+
+          <div class="auth-field">
+            <div class="auth-label-row"><label for="password">Mật khẩu</label><a href="mailto:support@flashmeeting.app?subject=Qu%C3%AAn%20m%E1%BA%ADt%20kh%E1%BA%A9u">Quên mật khẩu?</a></div>
+            <div class="auth-input-shell">
+              <input id="password" name="password" type="password" autocomplete="current-password" placeholder="Nhập mật khẩu" aria-describedby="password-error auth-status" minlength="8" required />
+              <button class="password-toggle" type="button" data-password-toggle data-target="password" aria-label="Hiện mật khẩu">Hiện</button>
+            </div>
+            <p class="field-error" data-field-error="password" id="password-error" aria-live="polite"></p>
+          </div>
+
+          <button class="button button-primary auth-submit" type="submit"><span class="auth-submit-spinner" aria-hidden="true"></span><span data-submit-label>Đăng nhập</span><span class="auth-submit-arrow" aria-hidden="true">↗</span></button>
+          <p class="form-status" id="auth-status" data-form-status role="status" aria-live="polite"></p>
+        </form>
+
+        <div class="auth-divider"><span>hoặc</span></div>
+        <button class="button button-secondary google-button" type="button" data-google-login><span class="google-mark" aria-hidden="true">G</span><span data-google-label>Tiếp tục với Google</span></button>
+        <p class="auth-switch">Chưa có tài khoản? <a href="register.html">Tạo tài khoản</a></p>
+      </section>
+    </main>
+    <script type="module" src="./js/auth.js"></script>
+  </body>
+</html>

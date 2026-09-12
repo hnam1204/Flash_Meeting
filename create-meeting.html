@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Tạo phòng họp FLASH MEETING mới." />
+    <title>FLASH MEETING — Tạo cuộc họp</title>
+    <link rel="stylesheet" href="./css/base.css" />
+    <link rel="stylesheet" href="./css/meeting-form.css" />
+  </head>
+  <body class="create-page" data-create-state="initializing">
+    <div class="create-shell">
+      <header class="create-header container">
+        <a class="brand create-brand" href="index.html" aria-label="FLASH MEETING trang chủ">
+          <span class="brand-mark" aria-hidden="true">F</span>
+          <span>FLASH<span class="brand-accent">MEETING</span></span>
+        </a>
+        <nav class="create-nav" aria-label="Điều hướng chính">
+          <a href="index.html">Trang chủ</a>
+          <a href="join-meeting.html">Tham gia</a>
+          <a href="mailto:hello@flashmeeting.app">Trợ giúp</a>
+        </nav>
+        <a class="create-profile" href="index.html" aria-label="Mở Dashboard">
+          <span aria-hidden="true">NH</span>
+        </a>
+      </header>
+
+      <main class="create-main container">
+        <a class="create-back" href="index.html"><span aria-hidden="true">←</span> Quay lại</a>
+
+        <div class="create-layout">
+          <aside class="create-visual" aria-label="Minh họa cuộc họp FLASH MEETING">
+            <p class="create-note create-note-top">Same people<br /><em>brighter ideas.</em></p>
+            <div class="create-visual-orbit"></div>
+            <div class="create-visual-screen">
+              <div class="visual-screen-bar"><span><b></b> FLASH MEETING</span><small>new room</small></div>
+              <div class="visual-screen-grid"><span>AM</span><span>NR</span><span>JT</span><span>SK</span></div>
+              <div class="visual-screen-controls"><i></i><i></i><b></b><i></i></div>
+            </div>
+            <div class="create-visual-base"></div>
+            <p class="create-note create-note-bottom">Make space<br /><em>for the next voice.</em></p>
+            <div class="create-plant" aria-hidden="true"><i></i><i></i><i></i><b></b></div>
+          </aside>
+
+          <section class="create-card" aria-labelledby="create-title">
+            <header class="create-card-header">
+              <div class="create-icon" aria-hidden="true"><span></span><i></i></div>
+              <p class="eyebrow">New room</p>
+              <h1 id="create-title">Tạo cuộc họp mới</h1>
+              <p>Thiết lập phòng họp trước khi mời mọi người tham gia.</p>
+            </header>
+
+            <div class="create-banner" data-create-banner role="status" aria-live="polite" hidden></div>
+
+            <form class="create-form" data-create-meeting-form novalidate aria-busy="true">
+              <div class="create-field">
+                <label for="meeting-title">Tiêu đề cuộc họp <span>(tùy chọn)</span></label>
+                <input id="meeting-title" name="title" type="text" maxlength="100" autocomplete="off" placeholder="Ví dụ: Họp nhóm sản phẩm" aria-describedby="title-hint create-status" />
+                <p class="create-field-hint" id="title-hint">Một tên gọi rõ ràng giúp mọi người nhận ra phòng họp.</p>
+              </div>
+
+              <div class="create-field">
+                <label for="access-mode">Quyền truy cập</label>
+                <div class="create-select-wrap">
+                  <select id="access-mode" name="accessMode" aria-describedby="access-hint">
+                    <option value="link">Người có link hoặc mã phòng</option>
+                  </select>
+                </div>
+                <p class="create-field-hint" id="access-hint">Người tham gia vẫn cần vượt qua kiểm tra phòng và sức chứa.</p>
+              </div>
+
+              <div class="create-option-row">
+                <label class="create-switch-label" for="waiting-room">
+                  <span class="create-option-copy"><strong>Phòng chờ</strong><small>Người tham gia cần được bạn phê duyệt trước khi vào cuộc họp.</small></span>
+                  <span class="create-switch">
+                    <input id="waiting-room" name="waitingRoom" type="checkbox" role="switch" aria-checked="true" checked />
+                    <span class="create-switch-track" aria-hidden="true"></span>
+                  </span>
+                </label>
+              </div>
+
+              <div class="create-field">
+                <label for="max-participants">Giới hạn người tham gia</label>
+                <div class="create-select-wrap">
+                  <select id="max-participants" name="maxParticipants" aria-describedby="capacity-hint">
+                    <option value="5">5 người</option>
+                    <option value="10">10 người</option>
+                    <option value="20">20 người</option>
+                    <option value="30">30 người</option>
+                    <option value="50" selected>50 người</option>
+                  </select>
+                </div>
+                <p class="create-field-hint" id="capacity-hint">FLASH MEETING hỗ trợ tối đa 50 người trong một cuộc họp.</p>
+              </div>
+
+              <div class="create-room-note"><span aria-hidden="true">✦</span><span>Mã phòng sẽ được tạo sau khi bạn xác nhận.</span></div>
+
+              <button class="button button-primary create-submit" type="submit" data-create-submit>
+                <span class="create-submit-spinner" aria-hidden="true"></span>
+                <span data-create-submit-label>Tạo cuộc họp</span>
+                <span class="create-submit-arrow" aria-hidden="true">↗</span>
+              </button>
+              <p class="form-status create-status" id="create-status" data-form-status role="status" aria-live="polite"></p>
+            </form>
+          </section>
+        </div>
+      </main>
+    </div>
+    <script type="module" src="./js/meeting-create.js"></script>
+  </body>
+</html>

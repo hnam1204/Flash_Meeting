@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Kiểm tra thiết bị trước khi tham gia cuộc họp FLASH MEETING." />
+    <title>FLASH MEETING — Chuẩn bị tham gia</title>
+    <link rel="stylesheet" href="./css/base.css" />
+    <link rel="stylesheet" href="./css/prejoin.css" />
+  </head>
+  <body class="prejoin-page" data-prejoin-state="initializing">
+    <main class="prejoin-shell">
+      <a class="brand prejoin-brand" href="index.html" aria-label="FLASH MEETING trang chủ">
+        <span class="brand-mark" aria-hidden="true">F</span>
+        <span>FLASH<span class="brand-accent">MEETING</span></span>
+      </a>
+
+      <section class="prejoin-card" aria-labelledby="prejoin-title">
+        <header class="prejoin-card-header">
+          <a class="prejoin-back" href="join-meeting.html"><span aria-hidden="true">&#8592;</span> Quay lại</a>
+          <div class="prejoin-heading-row">
+            <div>
+              <p class="prejoin-kicker">Một bước cuối</p>
+              <h1 id="prejoin-title">Sẵn sàng tham gia?</h1>
+              <p>Kiểm tra thiết bị trước khi bước vào cuộc họp.</p>
+            </div>
+            <div class="meeting-summary" data-meeting-summary hidden>
+              <span class="meeting-summary-icon" aria-hidden="true">&#9679;</span>
+              <span><strong data-meeting-title>Cuộc họp</strong><small data-meeting-meta></small></span>
+            </div>
+          </div>
+        </header>
+
+        <div class="prejoin-banner" data-prejoin-banner role="status" aria-live="polite" hidden></div>
+
+        <div class="prejoin-content">
+          <section class="preview-column" aria-labelledby="preview-title">
+            <h2 id="preview-title" class="sr-only">Xem trước camera</h2>
+            <div class="preview-frame">
+              <video data-local-preview autoplay playsinline muted aria-label="Xem trước camera của bạn"></video>
+              <div class="preview-placeholder" data-preview-placeholder>
+                <span class="preview-placeholder-icon" aria-hidden="true">&#9679;</span>
+                <strong data-preview-placeholder-title>Camera đang tắt</strong>
+                <small data-preview-placeholder-copy>Bạn vẫn có thể tham gia mà không bật camera.</small>
+              </div>
+              <div class="preview-overlay">
+                <span class="preview-name" data-preview-name>Khách tham gia</span>
+                <span class="preview-camera-state" data-camera-state>Camera đang tắt</span>
+              </div>
+            </div>
+
+            <div class="media-toggle-row" aria-label="Điều khiển thiết bị">
+              <button class="media-toggle" type="button" data-media-toggle="microphone" aria-pressed="false" disabled>
+                <span class="media-toggle-icon" aria-hidden="true">&#9835;</span>
+                <span><strong>Micro</strong><small data-microphone-toggle-state>Đang tắt</small></span>
+              </button>
+              <button class="media-toggle" type="button" data-media-toggle="camera" aria-pressed="false" disabled>
+                <span class="media-toggle-icon" aria-hidden="true">&#9632;</span>
+                <span><strong>Camera</strong><small data-camera-toggle-state>Đang tắt</small></span>
+              </button>
+            </div>
+          </section>
+
+          <form class="prejoin-form" data-prejoin-form novalidate aria-busy="true">
+            <div class="prejoin-form-header">
+              <h2>Thiết bị của bạn</h2>
+              <p>Chọn thiết bị bạn muốn sử dụng cho cuộc họp.</p>
+            </div>
+
+            <div class="device-field">
+              <label for="camera-device">Camera</label>
+              <select id="camera-device" name="cameraDevice" data-device-select="camera" aria-describedby="camera-device-status" disabled>
+                <option value="">Đang tìm camera…</option>
+              </select>
+              <small id="camera-device-status" data-device-status="camera">Đang chuẩn bị camera.</small>
+            </div>
+
+            <div class="device-field">
+              <label for="microphone-device">Microphone</label>
+              <select id="microphone-device" name="microphoneDevice" data-device-select="microphone" aria-describedby="microphone-device-status" disabled>
+                <option value="">Đang tìm microphone…</option>
+              </select>
+              <small id="microphone-device-status" data-device-status="microphone">Đang chuẩn bị microphone.</small>
+            </div>
+
+            <div class="prejoin-field">
+              <label for="display-name">Tên hiển thị</label>
+              <input id="display-name" name="displayName" type="text" autocomplete="name" maxlength="50" placeholder="Ví dụ: Nguyễn Văn A" aria-describedby="display-name-error" required />
+              <p class="field-error" data-field-error="displayName" id="display-name-error" aria-live="polite"></p>
+            </div>
+
+            <button class="button button-primary prejoin-submit" type="submit" data-prejoin-submit disabled>
+              <span class="prejoin-submit-spinner" aria-hidden="true"></span>
+              <span data-prejoin-submit-label>Tham gia cuộc họp</span>
+              <span aria-hidden="true">&#8599;</span>
+            </button>
+            <p class="form-status prejoin-status" data-form-status role="status" aria-live="polite"></p>
+          </form>
+        </div>
+
+        <p class="prejoin-helper">Thiết bị chỉ được sử dụng cho bản xem trước cục bộ trên trình duyệt này.</p>
+      </section>
+    </main>
+    <script type="module" src="./js/meeting-prejoin.js"></script>
+  </body>
+</html>

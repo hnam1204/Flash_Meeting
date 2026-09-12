@@ -1,0 +1,3 @@
+-- FLASH MEETING Phase 1 foundation.
+-- Phase 10 owns security_events, security_blocks, rate limits, and audit rules.
+-- Do not treat client-side security state as enforcement.

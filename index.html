@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Trang chủ FLASH MEETING — tạo, tham gia và quản lý các cuộc họp." />
+    <title>FLASH MEETING — Trang chủ</title>
+    <link rel="stylesheet" href="./css/base.css" />
+    <link rel="stylesheet" href="./css/home.css" />
+  </head>
+  <body class="home-page" data-dashboard-state="initializing">
+    <div class="dashboard-shell">
+      <header class="dashboard-header container">
+        <a class="brand dashboard-brand" href="index.html" aria-label="FLASH MEETING trang chủ">
+          <span class="brand-mark" aria-hidden="true">F</span>
+          <span>FLASH<span class="brand-accent">MEETING</span></span>
+        </a>
+        <nav class="dashboard-nav" aria-label="Điều hướng chính">
+          <a class="is-active" href="index.html" aria-current="page">Trang chủ</a>
+          <button type="button" data-coming-soon="Lịch họp">Lịch họp</button>
+          <button type="button" data-coming-soon="Bản ghi">Bản ghi</button>
+          <button type="button" data-coming-soon="Cài đặt">Cài đặt</button>
+        </nav>
+        <div class="dashboard-actions">
+          <div class="popover-wrap">
+            <button class="notification-button" type="button" data-notification-trigger aria-label="Thông báo, 3 thông báo chưa đọc" aria-expanded="false" aria-haspopup="true">
+              <span class="bell-icon" aria-hidden="true">♧</span><span class="unread-badge" data-unread-count>3</span>
+            </button>
+            <div class="popover notification-popover" data-notification-panel hidden>
+              <div class="popover-heading"><strong>Thông báo</strong><button type="button" data-mark-read>Đánh dấu đã đọc</button></div>
+              <div class="notification-list" data-notification-list></div>
+            </div>
+          </div>
+          <div class="popover-wrap profile-wrap">
+            <button class="profile-trigger" type="button" data-profile-trigger aria-expanded="false" aria-haspopup="true">
+              <span class="profile-avatar" data-profile-avatar aria-hidden="true">NH</span><span class="profile-name" data-profile-name>Nguyễn Hải Nam</span><span class="profile-chevron" aria-hidden="true">⌄</span>
+            </button>
+            <div class="popover profile-popover" data-profile-panel hidden>
+              <div class="profile-summary"><span class="profile-avatar profile-avatar-large" data-profile-avatar>NH</span><span><strong data-profile-name>Nguyễn Hải Nam</strong><small data-profile-email>demo@example.com</small></span></div>
+              <div class="popover-rule"></div>
+              <button type="button" data-coming-soon="Hồ sơ">Hồ sơ <span aria-hidden="true">↗</span></button>
+              <button type="button" data-coming-soon="Cài đặt">Cài đặt <span aria-hidden="true">↗</span></button>
+              <div class="popover-rule"></div>
+              <button class="logout-button" type="button" data-logout>Đăng xuất <span aria-hidden="true">↗</span></button>
+            </div>
+          </div>
+        </div>
+        <button class="mobile-menu-button" type="button" data-mobile-menu aria-label="Mở điều hướng" aria-expanded="false">☰</button>
+      </header>
+
+      <div class="dashboard-status container" data-dashboard-status role="status" aria-live="polite"></div>
+
+      <main class="dashboard-main container">
+        <section class="dashboard-hero" aria-labelledby="dashboard-title">
+          <div class="dashboard-hero-copy">
+            <div class="dashboard-kicker"><span class="status-dot status-dot-live"></span> Kết nối mọi người · Làm việc hiệu quả hơn</div>
+            <p class="dashboard-greeting">Chào buổi sáng, <strong data-greeting-name>Hải Nam</strong> <span aria-hidden="true">✦</span></p>
+            <h1 id="dashboard-title">Họp trực tuyến<br /><em>đơn giản hơn,</em><br />gần nhau hơn.</h1>
+            <p class="dashboard-intro">FLASH MEETING giúp bạn kết nối, trao đổi và làm việc hiệu quả hơn — mọi lúc, mọi nơi.</p>
+            <div class="dashboard-cta-grid">
+              <a class="dashboard-cta dashboard-cta-primary" href="create-meeting.html"><span class="cta-icon" aria-hidden="true">▣</span><span><strong>Tạo cuộc họp</strong><small>Bắt đầu cuộc họp ngay</small></span><span class="cta-arrow" aria-hidden="true">↗</span></a>
+              <a class="dashboard-cta dashboard-cta-secondary" href="join-meeting.html"><span class="cta-icon" aria-hidden="true">◉</span><span><strong>Tham gia cuộc họp</strong><small>Nhập mã cuộc họp</small></span><span class="cta-arrow" aria-hidden="true">↗</span></a>
+            </div>
+          </div>
+          <div class="dashboard-hero-visual" aria-label="Minh họa phòng họp FLASH MEETING">
+            <div class="hero-visual-backdrop"></div><div class="visual-note visual-note-left">Good meetings<br /><em>better work.</em></div><div class="visual-note visual-note-right">Same people<br /><em>brighter ideas.</em></div>
+            <div class="dashboard-laptop"><div class="dashboard-screen"><div class="screen-bar"><span><b></b> FLASH MEETING</span><small>Phòng họp · ABC-123</small><i>•••</i></div><div class="screen-grid"><div class="screen-person person-one"><span>AM</span><b>Alex</b></div><div class="screen-person person-two"><span>NR</span><b>Nia</b></div><div class="screen-person person-three"><span>JT</span><b>Jordan</b></div><div class="screen-person person-four"><span>SK</span><b>Sam</b></div></div><div class="screen-controls"><i>◉</i><i>◍</i><i>▣</i><i>•••</i><b>↗</b></div></div><div class="dashboard-laptop-base"></div></div>
+            <div class="hero-plant" aria-hidden="true"><i></i><i></i><i></i><b></b></div><div class="hero-mug" aria-hidden="true"><span>F</span></div>
+          </div>
+        </section>
+
+        <section class="dashboard-section active-section" aria-labelledby="active-title">
+          <div class="section-heading"><div><span class="section-eyebrow">LIVE NOW</span><h2 id="active-title">Đang diễn ra</h2></div><span class="section-note">Sẵn sàng tham gia</span></div>
+          <div class="meeting-card-grid" data-active-list></div>
+          <div class="section-empty section-empty-compact" data-active-empty hidden><span aria-hidden="true">◌</span><strong>Hiện không có cuộc họp nào đang diễn ra.</strong><a class="button button-secondary button-small" href="join-meeting.html">Tham gia bằng mã</a></div>
+        </section>
+
+        <section class="dashboard-section upcoming-section" aria-labelledby="upcoming-title">
+          <div class="section-heading"><div><span class="section-eyebrow">YOUR SCHEDULE</span><h2 id="upcoming-title">Cuộc họp sắp tới</h2></div><button class="section-link" type="button" data-coming-soon="Lịch họp">Xem lịch <span aria-hidden="true">→</span></button></div>
+          <div class="meeting-card-grid" data-upcoming-list></div>
+          <div class="section-empty" data-upcoming-empty hidden><span aria-hidden="true">◌</span><strong>Bạn chưa có cuộc họp nào sắp tới.</strong><a class="button button-primary button-small" href="create-meeting.html">Tạo cuộc họp</a></div>
+        </section>
+
+        <section class="dashboard-section recent-section" aria-labelledby="recent-title">
+          <div class="section-heading"><div><span class="section-eyebrow">YOUR ACTIVITY</span><h2 id="recent-title">Gần đây</h2></div><button class="section-link" type="button" data-coming-soon="Lịch sử cuộc họp">Xem tất cả <span aria-hidden="true">→</span></button></div>
+          <div class="recent-list" data-recent-list></div>
+          <div class="section-empty section-empty-compact" data-recent-empty hidden><span aria-hidden="true">◌</span><strong>Bạn chưa tham gia cuộc họp nào gần đây.</strong></div>
+        </section>
+
+        <section class="dashboard-features" aria-label="Tính năng FLASH MEETING">
+          <article><span class="dashboard-feature-icon feature-blue" aria-hidden="true">▣</span><span><strong>Họp video chất lượng cao</strong><small>Hình ảnh sắc nét, âm thanh ổn định trên mọi thiết bị.</small></span></article>
+          <article><span class="dashboard-feature-icon feature-green" aria-hidden="true">▤</span><span><strong>Chia sẻ màn hình dễ dàng</strong><small>Cùng thảo luận, trình bày và làm việc hiệu quả hơn.</small></span></article>
+          <article><span class="dashboard-feature-icon feature-gold" aria-hidden="true">◆</span><span><strong>An toàn và bảo mật</strong><small>Dữ liệu của bạn luôn được bảo vệ với các tiêu chuẩn hàng đầu.</small></span></article>
+        </section>
+      </main>
+
+      <div class="toast" data-toast role="status" aria-live="polite" hidden></div>
+    </div>
+    <script type="module" src="./js/home.js"></script>
+  </body>
+</html>

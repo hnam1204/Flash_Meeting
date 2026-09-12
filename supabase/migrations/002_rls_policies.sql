@@ -1,0 +1,3 @@
+-- FLASH MEETING Phase 1 foundation.
+-- Phase 2 must enable RLS on every exposed application table and add policies
+-- that resolve authorization from auth.uid(), never from browser-provided roles.

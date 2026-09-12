@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Tạo tài khoản FLASH MEETING." />
+    <title>FLASH MEETING — Tạo tài khoản</title>
+    <link rel="stylesheet" href="./css/base.css" />
+    <link rel="stylesheet" href="./css/auth.css" />
+  </head>
+  <body class="auth-page" data-auth-mode="register" data-auth-state="ready">
+    <main class="auth-shell">
+      <a class="brand auth-brand" href="index.html" aria-label="FLASH MEETING trang chủ">
+        <span class="brand-mark" aria-hidden="true">F</span>
+        <span>FLASH<span class="brand-accent">MEETING</span></span>
+      </a>
+
+      <section class="auth-card" aria-labelledby="register-title">
+        <header class="auth-card-header">
+          <p class="auth-kicker">Start with your team</p>
+          <h1 id="register-title">Tạo tài khoản</h1>
+          <p>Thiết lập không gian để bắt đầu những cuộc họp hiệu quả hơn.</p>
+        </header>
+
+        <form class="auth-form" data-auth-form novalidate aria-busy="false">
+          <div class="auth-field">
+            <label for="display-name">Tên hiển thị</label>
+            <div class="auth-input-shell">
+              <input id="display-name" name="displayName" type="text" autocomplete="name" placeholder="Nguyễn Hải Nam" aria-describedby="display-name-error" required />
+            </div>
+            <p class="field-error" data-field-error="displayName" id="display-name-error" aria-live="polite"></p>
+          </div>
+
+          <div class="auth-field">
+            <label for="email">Email</label>
+            <div class="auth-input-shell">
+              <input id="email" name="email" type="email" autocomplete="email" placeholder="you@company.com" aria-describedby="register-email-error" required />
+            </div>
+            <p class="field-error" data-field-error="email" id="register-email-error" aria-live="polite"></p>
+          </div>
+
+          <div class="auth-field">
+            <label for="password">Mật khẩu</label>
+            <div class="auth-input-shell">
+              <input id="password" name="password" type="password" autocomplete="new-password" placeholder="Ít nhất 8 ký tự" aria-describedby="register-password-error" minlength="8" required />
+              <button class="password-toggle" type="button" data-password-toggle data-target="password" aria-label="Hiện mật khẩu">Hiện</button>
+            </div>
+            <p class="field-error" data-field-error="password" id="register-password-error" aria-live="polite"></p>
+          </div>
+
+          <div class="auth-field">
+            <label for="confirm-password">Xác nhận mật khẩu</label>
+            <div class="auth-input-shell">
+              <input id="confirm-password" name="confirmPassword" type="password" autocomplete="new-password" placeholder="Nhập lại mật khẩu" aria-describedby="confirm-password-error" minlength="8" required />
+              <button class="password-toggle" type="button" data-password-toggle data-target="confirm-password" aria-label="Hiện mật khẩu">Hiện</button>
+            </div>
+            <p class="field-error" data-field-error="confirmPassword" id="confirm-password-error" aria-live="polite"></p>
+          </div>
+
+          <button class="button button-primary auth-submit" type="submit"><span class="auth-submit-spinner" aria-hidden="true"></span><span data-submit-label>Tạo tài khoản</span><span class="auth-submit-arrow" aria-hidden="true">↗</span></button>
+          <p class="form-status" id="auth-status" data-form-status role="status" aria-live="polite"></p>
+        </form>
+
+        <p class="auth-switch">Đã có tài khoản? <a href="login.html">Đăng nhập</a></p>
+      </section>
+    </main>
+    <script type="module" src="./js/auth.js"></script>
+  </body>
+</html>

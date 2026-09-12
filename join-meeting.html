@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Tham gia cuộc họp FLASH MEETING bằng mã phòng." />
+    <title>FLASH MEETING — Tham gia cuộc họp</title>
+    <link rel="stylesheet" href="./css/base.css" />
+    <link rel="stylesheet" href="./css/meeting-form.css" />
+  </head>
+  <body class="join-page" data-join-state="initializing">
+    <main class="join-shell">
+      <a class="brand join-brand" href="index.html" aria-label="FLASH MEETING trang chủ">
+        <span class="brand-mark" aria-hidden="true">F</span>
+        <span>FLASH<span class="brand-accent">MEETING</span></span>
+      </a>
+
+      <section class="join-card" aria-labelledby="join-title">
+        <header class="join-card-header">
+          <div class="join-icon" aria-hidden="true"><span></span><span></span><span></span></div>
+          <p class="join-kicker">Join your team</p>
+          <h1 id="join-title">Tham gia cuộc họp</h1>
+          <p>Nhập mã phòng để tiếp tục đến bước kiểm tra thiết bị.</p>
+        </header>
+
+        <div class="join-banner" data-join-banner role="status" aria-live="polite" hidden></div>
+
+        <form class="join-form" data-join-meeting-form novalidate aria-busy="true">
+          <div class="join-field">
+            <label for="room-code">Mã phòng</label>
+            <input id="room-code" name="roomCode" type="text" inputmode="text" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="120" placeholder="Ví dụ: ABC-123-XYZ" aria-describedby="room-code-hint room-code-error join-status" required />
+            <p class="join-field-hint" id="room-code-hint">Bạn có thể nhập mã phòng hoặc dán liên kết cuộc họp.</p>
+            <p class="join-field-error" data-field-error="roomCode" id="room-code-error" aria-live="polite"></p>
+          </div>
+
+          <div class="join-field">
+            <label for="display-name">Tên hiển thị <span>(tùy chọn)</span></label>
+            <input id="display-name" name="displayName" type="text" autocomplete="name" maxlength="50" placeholder="Ví dụ: Nguyễn Văn A" aria-describedby="display-name-hint display-name-error join-status" />
+            <p class="join-field-hint" id="display-name-hint">Nếu để trống, hệ thống sẽ dùng tên khách tham gia.</p>
+            <p class="join-field-error" data-field-error="displayName" id="display-name-error" aria-live="polite"></p>
+          </div>
+
+          <button class="button button-primary join-submit" type="submit" data-join-submit>
+            <span class="join-submit-spinner" aria-hidden="true"></span>
+            <span data-join-submit-label>Tham gia cuộc họp</span>
+            <span class="join-submit-arrow" aria-hidden="true">↗</span>
+          </button>
+          <p class="form-status join-status" id="join-status" data-form-status role="status" aria-live="polite"></p>
+        </form>
+
+        <div class="join-helper">
+          <span class="join-helper-icon" aria-hidden="true">&#9679;</span>
+          <p>Bạn sẽ kiểm tra camera và microphone ở bước tiếp theo.</p>
+        </div>
+
+        <a class="join-back" href="index.html"><span aria-hidden="true">&#8592;</span> Quay lại Trang chủ</a>
+      </section>
+    </main>
+    <script type="module" src="./js/meeting-join.js"></script>
+  </body>
+</html>

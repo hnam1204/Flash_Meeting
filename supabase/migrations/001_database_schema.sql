@@ -1,0 +1,4 @@
+-- FLASH MEETING Phase 1 foundation.
+-- Phase 2 owns the first executable schema migration for profiles, meetings,
+-- settings, participants, join requests, and messages.
+-- Keep this file as a migration placeholder until the Supabase project exists.
