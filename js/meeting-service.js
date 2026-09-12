@@ -32,6 +32,16 @@ export const JOIN_MEETING_ERROR_CODES = Object.freeze({
 
 const MOCK_DELAY = 620;
 const ROOM_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+const WAITING_REQUEST_KEY = 'flashMeeting.waitingRequest';
+const WAITING_REQUEST_STATUSES = Object.freeze({
+  WAITING: 'waiting',
+  APPROVED: 'approved',
+  REJECTED: 'rejected',
+  ROOM_FULL: 'room_full',
+  MEETING_ENDED: 'meeting_ended',
+  MEETING_LOCKED: 'meeting_locked',
+  REMOVED: 'removed'
+});
 
 function wait(duration) {
   return new Promise((resolve) => window.setTimeout(resolve, duration));
@@ -122,6 +132,7 @@ const MOCK_JOIN_MEETINGS = Object.freeze({
   'ABC-123-XYZ': {
     id: 'mock-meeting-abc-123-xyz',
     title: 'Cuộc họp nhóm sản phẩm',
+    hostName: 'Nguyễn Hải Nam',
     status: 'active',
     waitingRoomEnabled: false,
     maxParticipants: MAX_MEETING_PARTICIPANTS,
@@ -130,6 +141,7 @@ const MOCK_JOIN_MEETINGS = Object.freeze({
   'FLASH-101': {
     id: 'mock-meeting-flash-101',
     title: 'Weekly Flash Meeting',
+    hostName: 'Nguyễn Hải Nam',
     status: 'active',
     waitingRoomEnabled: true,
     maxParticipants: MAX_MEETING_PARTICIPANTS,
@@ -213,10 +225,141 @@ function getJoinMeeting(roomCode) {
   return meeting ? { roomCode, ...meeting } : null;
 }
 
+function readWaitingRequest() {
+  try {
+    return JSON.parse(sessionStorage.getItem(WAITING_REQUEST_KEY) || 'null');
+  } catch {
+    return null;
+  }
+}
+
+function writeWaitingRequest(request) {
+  try {
+    sessionStorage.setItem(WAITING_REQUEST_KEY, JSON.stringify(request));
+  } catch {
+    // Session storage is optional in mock mode.
+  }
+}
+
+function removeWaitingRequest() {
+  try {
+    sessionStorage.removeItem(WAITING_REQUEST_KEY);
+  } catch {
+    // Session storage is optional in mock mode.
+  }
+}
+
+function getWaitingScenarioStatus(scenario, meeting) {
+  if (scenario === 'room-full' || scenario === 'full' || meeting.participantCount >= Number(meeting.maxParticipants ?? MAX_MEETING_PARTICIPANTS)) {
+    return WAITING_REQUEST_STATUSES.ROOM_FULL;
+  }
+  if (scenario === 'meeting-ended' || scenario === 'ended' || meeting.status === 'ended') {
+    return WAITING_REQUEST_STATUSES.MEETING_ENDED;
+  }
+  if (scenario === 'meeting-locked' || scenario === 'locked' || meeting.status === 'locked') {
+    return WAITING_REQUEST_STATUSES.MEETING_LOCKED;
+  }
+  if (scenario === 'user-blocked' || scenario === 'blocked') {
+    return WAITING_REQUEST_STATUSES.REMOVED;
+  }
+  return '';
+}
+
+function createWaitingRequest(meeting, displayName, storedRequest = null) {
+  if (storedRequest?.roomCode === meeting.roomCode && storedRequest.status !== 'withdrawn') {
+    return {
+      ...storedRequest,
+      meetingTitle: meeting.title,
+      hostName: meeting.hostName || storedRequest.hostName || '',
+      displayName: String(displayName || storedRequest.displayName || 'Khách tham gia')
+    };
+  }
+
+  return {
+    roomCode: meeting.roomCode,
+    meetingTitle: meeting.title,
+    hostName: meeting.hostName || '',
+    displayName: String(displayName || 'Khách tham gia'),
+    status: WAITING_REQUEST_STATUSES.WAITING,
+    createdAt: Date.now()
+  };
+}
+
+export async function getWaitingRoom(input) {
+  await wait(MOCK_DELAY);
+
+  const scenario = getMockScenario();
+  if (scenario === 'auth-required' || scenario === 'session-expired') {
+    return { success: false, code: JOIN_MEETING_ERROR_CODES.AUTH_REQUIRED };
+  }
+  if (scenario === 'network' || scenario === 'network-error' || scenario === 'offline') {
+    return { success: false, code: JOIN_MEETING_ERROR_CODES.NETWORK_ERROR };
+  }
+  if (scenario === 'service-error' || scenario === 'service-unavailable') {
+    return { success: false, code: JOIN_MEETING_ERROR_CODES.SERVICE_UNAVAILABLE };
+  }
+
+  const roomCode = normalizeRoomCode(input?.roomCode);
+  if (!isLikelyRoomCode(roomCode)) {
+    return { success: false, code: JOIN_MEETING_ERROR_CODES.INVALID_ROOM_CODE };
+  }
+
+  const meeting = getJoinMeeting(roomCode);
+  if (!meeting) return { success: false, code: JOIN_MEETING_ERROR_CODES.MEETING_NOT_FOUND };
+
+  const storedRequest = readWaitingRequest();
+  const request = createWaitingRequest(meeting, input?.displayName, storedRequest);
+  const scenarioStatus = getWaitingScenarioStatus(scenario, meeting);
+  if (scenarioStatus) request.status = scenarioStatus;
+  if (!storedRequest || storedRequest.roomCode !== roomCode || scenarioStatus) writeWaitingRequest(request);
+
+  return { success: true, meeting, request };
+}
+
+export function watchWaitingRequest({ roomCode, status, onChange, onError } = {}) {
+  const scenario = getMockScenario();
+  if (status !== WAITING_REQUEST_STATUSES.WAITING && status !== 'reconnecting') return () => {};
+
+  const nextStatus = scenario === 'approved'
+    ? WAITING_REQUEST_STATUSES.APPROVED
+    : scenario === 'rejected'
+      ? WAITING_REQUEST_STATUSES.REJECTED
+      : '';
+  const shouldFailReconnect = scenario === 'reconnect-failure';
+  if (!nextStatus && !shouldFailReconnect && scenario !== 'reconnecting') return () => {};
+
+  const timer = window.setTimeout(() => {
+    if (shouldFailReconnect) {
+      onError?.({ code: JOIN_MEETING_ERROR_CODES.NETWORK_ERROR });
+      return;
+    }
+    const resolvedStatus = scenario === 'reconnecting' ? WAITING_REQUEST_STATUSES.WAITING : nextStatus;
+    updateWaitingRequestStatus({ roomCode, status: resolvedStatus });
+    onChange?.({ status: resolvedStatus });
+  }, scenario === 'reconnecting' ? 950 : 760);
+
+  return () => window.clearTimeout(timer);
+}
+
+export function updateWaitingRequestStatus({ roomCode, status } = {}) {
+  if (!Object.values(WAITING_REQUEST_STATUSES).includes(status)) return false;
+  const request = readWaitingRequest();
+  if (!request || request.roomCode !== roomCode) return false;
+  writeWaitingRequest({ ...request, status });
+  return true;
+}
+
+export function withdrawWaitingRequest({ roomCode } = {}) {
+  const request = readWaitingRequest();
+  if (!request || request.roomCode === roomCode) removeWaitingRequest();
+  return { success: true, status: 'withdrawn' };
+}
+
 export async function resolveMeetingForJoin(input) {
   await wait(MOCK_DELAY);
 
   const scenario = getJoinErrorScenario();
+  const isJoinAttempt = input?.phase === 'join';
   if (scenario === 'auth-required' || scenario === 'session-expired') {
     return { success: false, code: JOIN_MEETING_ERROR_CODES.AUTH_REQUIRED };
   }
@@ -232,19 +375,19 @@ export async function resolveMeetingForJoin(input) {
   if (scenario === 'join-error' || scenario === 'error') {
     return { success: false, code: JOIN_MEETING_ERROR_CODES.JOIN_FAILED };
   }
-  if (scenario === 'room-full' || scenario === 'full') {
+  if (isJoinAttempt && (scenario === 'room-full' || scenario === 'full')) {
     return { success: false, code: JOIN_MEETING_ERROR_CODES.ROOM_FULL };
   }
-  if (scenario === 'meeting-ended' || scenario === 'ended') {
+  if (isJoinAttempt && (scenario === 'meeting-ended' || scenario === 'ended')) {
     return { success: false, code: JOIN_MEETING_ERROR_CODES.MEETING_ENDED };
   }
-  if (scenario === 'meeting-cancelled' || scenario === 'cancelled') {
+  if (isJoinAttempt && (scenario === 'meeting-cancelled' || scenario === 'cancelled')) {
     return { success: false, code: JOIN_MEETING_ERROR_CODES.MEETING_CANCELLED };
   }
-  if (scenario === 'meeting-locked' || scenario === 'locked') {
+  if (isJoinAttempt && (scenario === 'meeting-locked' || scenario === 'locked')) {
     return { success: false, code: JOIN_MEETING_ERROR_CODES.MEETING_LOCKED };
   }
-  if (scenario === 'user-blocked' || scenario === 'blocked') {
+  if (isJoinAttempt && (scenario === 'user-blocked' || scenario === 'blocked')) {
     return { success: false, code: JOIN_MEETING_ERROR_CODES.USER_BLOCKED };
   }
 
@@ -275,5 +418,9 @@ export async function resolveMeetingForJoin(input) {
 
 export const meetingService = Object.freeze({
   create: createMeeting,
-  resolveForJoin: resolveMeetingForJoin
+  resolveForJoin: resolveMeetingForJoin,
+  getWaitingRoom,
+  watchWaitingRequest,
+  updateWaitingRequestStatus,
+  withdrawWaitingRequest
 });

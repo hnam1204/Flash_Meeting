@@ -1,5 +1,48 @@
 <!doctype html>
-<html lang="en">
-  <head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="description" content="Meeting ended." /><title>Meeting ended | FLASH MEETING</title><link rel="stylesheet" href="./css/base.css" /><link rel="stylesheet" href="./css/meeting.css" /></head>
-  <body class="meeting-page"><main class="state-shell container"><a class="brand" href="index.html"><span class="brand-mark" aria-hidden="true">F</span><span>FLASH<span class="brand-accent">MEETING</span></span></a><section class="state-card"><span class="state-symbol state-symbol-success" aria-hidden="true">✓</span><p class="eyebrow">Room closed</p><h1>That’s a wrap.</h1><p class="state-copy">You left the meeting. The room summary will appear here when meeting history is connected.</p><div class="state-actions"><a class="button button-primary" href="index.html">Back to home</a><a class="button button-secondary" href="join-meeting.html">Join another room</a></div></section></main></body>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Kết quả phiên tham gia cuộc họp FLASH MEETING." />
+    <title>FLASH MEETING — Đã rời cuộc họp</title>
+    <link rel="stylesheet" href="./css/base.css" />
+    <link rel="stylesheet" href="./css/meeting.css" />
+  </head>
+  <body class="meeting-page meeting-ended-page">
+    <main class="result-shell" data-result-root>
+      <a class="brand result-brand" href="index.html" aria-label="FLASH MEETING - Trang chủ">
+        <span class="brand-mark" aria-hidden="true">F</span>
+        <span>FLASH <span class="brand-accent">MEETING</span></span>
+      </a>
+
+      <section class="result-card" role="status" aria-labelledby="result-title">
+        <span class="result-symbol" aria-hidden="true">✓</span>
+        <p class="eyebrow result-eyebrow" data-result-label>Phiên họp đã kết thúc</p>
+        <h1 id="result-title" data-result-title tabindex="-1">Cuộc họp đã kết thúc</h1>
+        <p class="result-copy" data-result-description>Phiên tham gia của bạn đã kết thúc.</p>
+
+        <div class="result-summary" data-result-summary hidden>
+          <div class="result-detail">
+            <span>Cuộc họp</span>
+            <strong data-result-meeting-title></strong>
+          </div>
+          <div class="result-detail">
+            <span>Mã phòng</span>
+            <strong class="result-code" data-result-room-code></strong>
+          </div>
+          <div class="result-detail">
+            <span>Thời gian tham gia</span>
+            <strong data-result-duration></strong>
+          </div>
+        </div>
+
+        <div class="result-actions">
+          <a class="button button-primary" href="index.html">Quay về trang chủ</a>
+          <a class="button button-secondary" href="join-meeting.html">Tham gia cuộc họp khác</a>
+        </div>
+      </section>
+    </main>
+
+    <script type="module" src="./js/meeting-ended.js"></script>
+  </body>
 </html>
