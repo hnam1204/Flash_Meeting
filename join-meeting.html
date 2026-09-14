@@ -5,19 +5,20 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content="Tham gia cuộc họp FLASH MEETING bằng mã phòng." />
     <title>FLASH MEETING — Tham gia cuộc họp</title>
+    <link rel="icon" type="image/png" href="./assets/brand/flash-meeting-favicon.png" />
     <link rel="stylesheet" href="./css/base.css" />
     <link rel="stylesheet" href="./css/meeting-form.css" />
   </head>
   <body class="join-page" data-join-state="initializing">
     <main class="join-shell">
       <a class="brand join-brand" href="index.html" aria-label="FLASH MEETING trang chủ">
-        <span class="brand-mark" aria-hidden="true">F</span>
-        <span>FLASH<span class="brand-accent">MEETING</span></span>
+        <img class="brand-logo" src="./assets/brand/flash-meeting-icon-64.png" alt="" width="40" height="40" />
+        <span>FLASH <span class="brand-accent">MEETING</span></span>
       </a>
 
       <section class="join-card" aria-labelledby="join-title">
         <header class="join-card-header">
-          <div class="join-icon" aria-hidden="true"><span></span><span></span><span></span></div>
+          <div class="join-icon" aria-hidden="true"><i data-lucide="key-round"></i></div>
           <p class="join-kicker">Join your team</p>
           <h1 id="join-title">Tham gia cuộc họp</h1>
           <p>Nhập mã phòng để tiếp tục đến bước kiểm tra thiết bị.</p>
@@ -43,19 +44,20 @@
           <button class="button button-primary join-submit" type="submit" data-join-submit>
             <span class="join-submit-spinner" aria-hidden="true"></span>
             <span data-join-submit-label>Tham gia cuộc họp</span>
-            <span class="join-submit-arrow" aria-hidden="true">↗</span>
+            <i class="join-submit-arrow" data-lucide="log-in" aria-hidden="true"></i>
           </button>
           <p class="form-status join-status" id="join-status" data-form-status role="status" aria-live="polite"></p>
         </form>
 
         <div class="join-helper">
-          <span class="join-helper-icon" aria-hidden="true">&#9679;</span>
+          <span class="join-helper-icon" aria-hidden="true"><i data-lucide="video"></i></span>
           <p>Bạn sẽ kiểm tra camera và microphone ở bước tiếp theo.</p>
         </div>
 
-        <a class="join-back" href="index.html"><span aria-hidden="true">&#8592;</span> Quay lại Trang chủ</a>
+        <a class="join-back" href="index.html"><i data-lucide="arrow-left" aria-hidden="true"></i> Quay lại Trang chủ</a>
       </section>
     </main>
+    <script type="module" src="./js/app-analytics.js"></script>
     <script type="module" src="./js/meeting-join.js"></script>
   </body>
 </html>

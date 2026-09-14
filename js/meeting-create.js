@@ -1,13 +1,13 @@
-import { authService } from './auth-service.js';
 import {
   CREATE_MEETING_ERROR_CODES,
-  DEFAULT_MEETING_PARTICIPANTS,
-  MAX_MEETING_PARTICIPANTS,
   MEETING_TITLE_MAX_LENGTH,
   SUPPORTED_ACCESS_MODE,
   meetingService
 } from './meeting-service.js';
 import { getPageUrl, setStatus } from './utils.js';
+import { protectPage } from './auth-guard.js';
+import { modal } from './ui/modal-manager.js';
+import { renderIcons } from './ui/icons.js';
 
 const CREATE_STATES = Object.freeze({
   INITIALIZING: 'initializing',
@@ -24,8 +24,10 @@ const status = document.querySelector('[data-form-status]');
 const banner = document.querySelector('[data-create-banner]');
 const submitButton = document.querySelector('[data-create-submit]');
 const submitLabel = document.querySelector('[data-create-submit-label]');
-const waitingRoomInput = form?.elements.waitingRoom;
+const profileAvatar = document.querySelector('[data-create-profile-avatar]');
 const scenario = new URLSearchParams(window.location.search).get('mock')?.toLowerCase() ?? '';
+
+renderIcons();
 
 function wait(duration) {
   return new Promise((resolve) => window.setTimeout(resolve, duration));
@@ -33,6 +35,12 @@ function wait(duration) {
 
 function setCreateState(state) {
   page.dataset.createState = state;
+}
+
+function renderProfileAvatar(user) {
+  if (!profileAvatar) return;
+  const words = String(user?.displayName || '').trim().split(/\s+/).filter(Boolean);
+  profileAvatar.textContent = words.map((word) => word[0]).slice(-2).join('').toUpperCase() || 'FM';
 }
 
 function setStatusMessage(message, state = 'info') {
@@ -71,7 +79,6 @@ function getErrorMessage(code) {
   const messages = {
     [CREATE_MEETING_ERROR_CODES.AUTH_REQUIRED]: 'Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.',
     [CREATE_MEETING_ERROR_CODES.INVALID_TITLE]: `Tiêu đề không được chỉ chứa khoảng trắng và không quá ${MEETING_TITLE_MAX_LENGTH} ký tự.`,
-    [CREATE_MEETING_ERROR_CODES.INVALID_CAPACITY]: `Giới hạn người tham gia phải từ 1 đến ${MAX_MEETING_PARTICIPANTS} người.`,
     [CREATE_MEETING_ERROR_CODES.RATE_LIMITED]: 'Bạn đang tạo cuộc họp quá nhanh. Vui lòng thử lại sau.',
     [CREATE_MEETING_ERROR_CODES.NETWORK_ERROR]: 'Không có kết nối Internet. Vui lòng thử lại khi mạng ổn định.',
     [CREATE_MEETING_ERROR_CODES.SERVICE_UNAVAILABLE]: 'Dịch vụ tạo cuộc họp tạm thời chưa sẵn sàng.',
@@ -97,13 +104,9 @@ function validateForm() {
   const rawTitle = String(form.elements.title.value ?? '');
   const title = rawTitle.trim();
   const accessMode = String(form.elements.accessMode.value ?? '');
-  const maxParticipants = Number(form.elements.maxParticipants.value);
 
   if ((rawTitle.length > 0 && !title) || title.length > MEETING_TITLE_MAX_LENGTH) {
     return { success: false, code: CREATE_MEETING_ERROR_CODES.INVALID_TITLE };
-  }
-  if (!Number.isInteger(maxParticipants) || maxParticipants < 1 || maxParticipants > MAX_MEETING_PARTICIPANTS) {
-    return { success: false, code: CREATE_MEETING_ERROR_CODES.INVALID_CAPACITY };
   }
   if (accessMode !== SUPPORTED_ACCESS_MODE) {
     return { success: false, code: CREATE_MEETING_ERROR_CODES.CREATE_MEETING_FAILED };
@@ -113,11 +116,14 @@ function validateForm() {
     success: true,
     input: {
       title,
-      accessMode,
-      waitingRoomEnabled: waitingRoomInput.checked,
-      maxParticipants
+      accessMode
     }
   };
+}
+
+function retryCreate() {
+  if (page.dataset.createState === CREATE_STATES.ERROR) setCreateState(CREATE_STATES.READY);
+  form?.requestSubmit();
 }
 
 async function initializeCreatePage() {
@@ -126,12 +132,10 @@ async function initializeCreatePage() {
   form.setAttribute('aria-busy', 'true');
   await wait(300);
 
-  if (scenario === 'session-expired' || !authService.getSession()) {
-    window.location.href = `${getPageUrl('login.html')}?next=create-meeting.html`;
-    return;
-  }
+  const sessionResult = await protectPage();
+  if (!sessionResult.success || !sessionResult.session) return;
+  renderProfileAvatar(sessionResult.user);
 
-  form.elements.maxParticipants.value = String(DEFAULT_MEETING_PARTICIPANTS);
   setFormDisabled(false);
   form.setAttribute('aria-busy', 'false');
   setCreateState(CREATE_STATES.READY);
@@ -155,10 +159,22 @@ async function handleSubmit(event) {
   form.setAttribute('aria-busy', 'true');
   submitLabel.textContent = 'Đang tạo cuộc họp…';
   setStatusMessage('Đang chuẩn bị phòng họp của bạn…');
+  modal.processing({ title: 'Đang tạo cuộc họp', message: 'Đang chuẩn bị phòng họp của bạn.' });
 
-  const result = await meetingService.create(validation.input);
+  let result;
+  try {
+    result = await meetingService.create(validation.input);
+  } catch {
+    result = { success: false, code: CREATE_MEETING_ERROR_CODES.CREATE_MEETING_FAILED };
+  }
   if (!result.success) {
     showError(result.code);
+    modal.error({
+      title: 'Không thể tạo cuộc họp',
+      message: getErrorMessage(result.code),
+      retryText: 'Thử lại',
+      onRetry: retryCreate
+    });
     return;
   }
 
@@ -170,10 +186,6 @@ async function handleSubmit(event) {
     window.location.href = `${getPageUrl('prejoin.html')}?room=${encodeURIComponent(result.meeting.roomCode)}`;
   }, 350);
 }
-
-waitingRoomInput?.addEventListener('change', () => {
-  waitingRoomInput.setAttribute('aria-checked', String(waitingRoomInput.checked));
-});
 
 form?.querySelectorAll('input, select').forEach((control) => {
   control.addEventListener('input', () => {

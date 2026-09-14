@@ -1,6 +1,8 @@
 import { authService } from './auth-service.js';
 import { JOIN_MEETING_ERROR_CODES, meetingService } from './meeting-service.js';
 import { getPageUrl, isLikelyRoomCode, normalizeRoomCode, setStatus } from './utils.js';
+import { modal } from './ui/modal-manager.js';
+import { renderIcons } from './ui/icons.js';
 
 const JOIN_STATES = Object.freeze({
   INITIALIZING: 'initializing',
@@ -23,6 +25,8 @@ const roomCodeInput = form?.elements.roomCode;
 const displayNameInput = form?.elements.displayName;
 const submitButton = document.querySelector('[data-join-submit]');
 const submitLabel = document.querySelector('[data-join-submit-label]');
+
+renderIcons();
 
 function wait(duration) {
   return new Promise((resolve) => window.setTimeout(resolve, duration));
@@ -129,6 +133,7 @@ function getErrorMessage(code) {
     [JOIN_MEETING_ERROR_CODES.MEETING_ENDED]: 'Cuộc họp này đã kết thúc.',
     [JOIN_MEETING_ERROR_CODES.MEETING_CANCELLED]: 'Cuộc họp này đã bị hủy.',
     [JOIN_MEETING_ERROR_CODES.MEETING_LOCKED]: 'Cuộc họp hiện đang bị khóa.',
+    [JOIN_MEETING_ERROR_CODES.MEETING_NOT_STARTED]: 'Chủ phòng chưa bắt đầu cuộc họp. Vui lòng thử lại sau.',
     [JOIN_MEETING_ERROR_CODES.ROOM_FULL]: 'Cuộc họp đã đủ người tham gia.',
     [JOIN_MEETING_ERROR_CODES.USER_BLOCKED]: 'Bạn không thể tham gia cuộc họp này.',
     [JOIN_MEETING_ERROR_CODES.NETWORK_ERROR]: 'Không có kết nối Internet. Vui lòng thử lại.',
@@ -155,6 +160,11 @@ function prefillFromUrl() {
 
   const session = authService.getSession();
   if (session?.displayName && !displayNameInput.value) displayNameInput.value = session.displayName;
+}
+
+function retryJoin() {
+  if (page.dataset.joinState === JOIN_STATES.ERROR) setJoinState(JOIN_STATES.READY);
+  form?.requestSubmit();
 }
 
 async function initializeJoinPage() {
@@ -189,10 +199,22 @@ async function handleSubmit(event) {
   form.setAttribute('aria-busy', 'true');
   submitLabel.textContent = 'Đang kiểm tra cuộc họp…';
   setStatusMessage('Đang tìm cuộc họp của bạn…');
+  modal.processing({ title: 'Đang tham gia cuộc họp', message: 'Đang tìm cuộc họp của bạn.' });
 
-  const result = await meetingService.resolveForJoin(validation.input);
+  let result;
+  try {
+    result = await meetingService.resolveForJoin(validation.input);
+  } catch {
+    result = { success: false, code: JOIN_MEETING_ERROR_CODES.JOIN_FAILED };
+  }
   if (!result.success) {
     showError(result.code);
+    modal.error({
+      title: 'Không thể tham gia cuộc họp',
+      message: getErrorMessage(result.code),
+      retryText: 'Thử lại',
+      onRetry: retryJoin
+    });
     return;
   }
 

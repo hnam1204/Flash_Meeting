@@ -1,3 +1,5 @@
+import { renderIcons } from './ui/icons.js';
+
 const RESULT_KEY = 'flashMeeting.leaveResult';
 
 const RESULT_COPY = Object.freeze({
@@ -89,4 +91,5 @@ function render() {
   }
 }
 
+renderIcons();
 render();

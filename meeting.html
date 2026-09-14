@@ -5,43 +5,48 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content="Phòng họp FLASH MEETING." />
     <title>FLASH MEETING — Cuộc họp</title>
+    <link rel="icon" type="image/png" href="./assets/brand/flash-meeting-favicon.png" />
     <link rel="stylesheet" href="./css/base.css" />
     <link rel="stylesheet" href="./css/meeting.css" />
   </head>
-  <body class="meeting-page dark-meeting" data-meeting-state="initializing" data-view-mode="speaker">
+  <body class="meeting-page dark-meeting" data-meeting-state="initializing" data-view-mode="speaker" data-auth-guard-state="AUTH_INITIALIZING">
     <main class="meeting-app" aria-label="Phòng họp FLASH MEETING">
       <header class="meeting-topbar">
         <div class="meeting-brand-cluster">
           <a class="brand brand-light" href="index.html" aria-label="FLASH MEETING trang chủ">
-            <span class="brand-mark" aria-hidden="true">F</span>
-            <span>FLASH<span class="brand-accent">MEETING</span></span>
+            <img class="brand-logo" src="./assets/brand/flash-meeting-icon-64.png" alt="" width="32" height="32" />
+            <span>FLASH <span class="brand-accent">MEETING</span></span>
           </a>
           <div class="room-meta">
             <span class="meeting-title" data-meeting-title>Cuộc họp nhóm sản phẩm</span>
             <button class="room-code-button" type="button" data-copy-room aria-label="Sao chép mã phòng">
               <span>Mã phòng</span>
               <strong data-room-code>ABC-123-XYZ</strong>
-              <span class="copy-glyph" aria-hidden="true">⧉</span>
+              <i class="copy-glyph" data-lucide="copy" aria-hidden="true"></i>
             </button>
           </div>
         </div>
 
         <div class="meeting-topbar-actions">
           <div class="meeting-duration" aria-label="Thời lượng cuộc họp">
-            <span class="duration-dot" aria-hidden="true"></span>
-            <span data-meeting-duration>00:24:17</span>
+            <i class="duration-icon" data-lucide="clock-3" aria-hidden="true"></i>
+            <span data-meeting-duration>00:00:00</span>
           </div>
-          <div class="connection-indicator" data-connection-indicator data-state="good" role="status" aria-live="polite">
-            <span class="connection-icon" aria-hidden="true">⌁</span>
+          <div class="recording-indicator" data-recording-indicator hidden role="status" aria-live="polite">
+            <span class="recording-dot" aria-hidden="true"></span>
+            <span data-recording-label>REC 00:00:00</span>
+          </div>
+          <div class="connection-indicator" data-connection-indicator data-state="good" role="status" aria-live="polite" hidden>
+            <i class="connection-icon" data-lucide="signal" aria-hidden="true"></i>
             <span data-connection-label>Kết nối tốt</span>
           </div>
           <div class="participant-count" aria-label="Số thành viên trong cuộc họp">
-            <span class="participant-count-icon" aria-hidden="true">◎</span>
-            <strong data-participant-count>24</strong><span> / <span data-capacity>50</span></span>
+            <i class="participant-count-icon" data-lucide="users" aria-hidden="true"></i>
+            <strong data-participant-count>24</strong><span> / <span data-capacity>—</span></span>
           </div>
-          <button class="topbar-button topbar-invite" type="button" data-open-invite>Mời</button>
+          <button class="topbar-button topbar-invite" type="button" data-open-invite><i data-lucide="user-plus" aria-hidden="true"></i> Mời</button>
           <div class="menu-anchor">
-            <button class="topbar-button icon-only" type="button" data-more-toggle aria-expanded="false" aria-haspopup="menu" aria-label="Thêm tùy chọn">•••</button>
+            <button class="topbar-button icon-only" type="button" data-more-toggle aria-expanded="false" aria-haspopup="menu" aria-label="Thêm tùy chọn"><i data-lucide="ellipsis" aria-hidden="true"></i></button>
             <div class="more-menu" data-more-menu role="menu" hidden>
               <button type="button" role="menuitem" data-more-action="info">Thông tin cuộc họp</button>
               <button type="button" role="menuitem" data-more-action="grid">Chế độ lưới</button>
@@ -61,37 +66,40 @@
             </div>
             <div class="stage-mode-status" data-stage-status>Chế độ người nói</div>
           </div>
+          <p class="share-support-note" data-share-support-note hidden role="status">Thiết bị hoặc trình duyệt này chưa hỗ trợ chia sẻ màn hình.</p>
 
           <div class="active-stage" data-stage-view="speaker">
-            <div class="stage-media stage-media-indigo" data-active-media aria-hidden="true">
+            <div class="stage-media stage-media-indigo" data-active-media>
               <span class="stage-light stage-light-one"></span>
               <span class="stage-light stage-light-two"></span>
-              <span class="stage-avatar" data-active-avatar>MA</span>
+              <video class="stage-local-video" data-local-stage-video autoplay playsinline muted aria-label="Camera của bạn" hidden></video>
+              <span class="stage-avatar" data-active-avatar>B</span>
               <span class="stage-video-label">Camera đang bật</span>
             </div>
             <div class="active-stage-topline">
-              <span class="speaking-pill"><span class="speaking-bars" aria-hidden="true"><i></i><i></i><i></i></span> Đang nói</span>
+              <span class="speaking-pill" hidden><span class="speaking-bars" aria-hidden="true"><i></i><i></i><i></i></span> Đang nói</span>
               <span class="stage-role" data-active-role>Thành viên</span>
             </div>
             <div class="active-stage-footer">
               <div>
-                <strong data-active-name>Minh Anh</strong>
-                <span data-active-device>Micro đang bật</span>
+                <strong data-active-name>Bạn</strong>
+                <span data-active-device>Camera và micro đang bật</span>
               </div>
               <span class="stage-local-badge" data-active-local hidden>Bạn</span>
             </div>
           </div>
 
           <div class="presentation-stage" data-presentation-stage hidden>
-            <div class="presentation-banner">
-              <div>
-                <p class="meeting-eyebrow">Trình bày</p>
-                <strong data-presentation-banner>Bạn đang trình bày màn hình</strong>
-              </div>
-              <button class="presentation-stop-button" type="button" data-stop-presentation hidden>Dừng trình bày</button>
+            <div class="presentation-status" role="status" aria-live="polite">
+              <span class="presentation-status-copy">
+                <span class="presentation-status-icon" data-presentation-status-icon aria-hidden="true"><i data-lucide="screen-share"></i></span>
+                <strong data-presentation-status-text>Bạn đang chia sẻ màn hình</strong>
+              </span>
+              <button class="presentation-stop-button" type="button" data-stop-presentation hidden>Dừng chia sẻ</button>
             </div>
             <div class="shared-screen-viewport">
               <video class="shared-screen-video" data-screen-share-video autoplay playsinline muted aria-label="Nội dung màn hình được chia sẻ" hidden></video>
+              <video class="camera-pip" data-camera-pip autoplay playsinline muted aria-label="Camera của bạn khi chia sẻ màn hình" hidden></video>
               <div class="remote-share-placeholder" data-remote-share-placeholder hidden aria-label="Nội dung đang được trình bày">
                 <div class="remote-window-bar"><span></span><span></span><span></span><strong data-remote-share-title>Đang trình bày</strong></div>
                 <div class="remote-window-body">
@@ -101,7 +109,7 @@
                 </div>
               </div>
               <div class="presentation-empty" data-presentation-empty hidden>
-                <span aria-hidden="true">▣</span>
+                <i data-lucide="screen-share" aria-hidden="true"></i>
                 <strong>Chưa có nội dung chia sẻ</strong>
               </div>
             </div>
@@ -110,13 +118,13 @@
           <div class="stage-grid-view" data-stage-view="grid" data-grid-tiles hidden></div>
 
           <div class="filmstrip-wrap">
-            <button class="filmstrip-arrow" type="button" data-filmstrip-prev aria-label="Nhóm thành viên trước">‹</button>
+            <button class="filmstrip-arrow" type="button" data-filmstrip-prev aria-label="Nhóm thành viên trước" hidden><i data-lucide="chevron-left" aria-hidden="true"></i></button>
             <div class="filmstrip" data-filmstrip role="list" aria-label="Thành viên đang hiển thị"></div>
-            <button class="filmstrip-arrow" type="button" data-filmstrip-next aria-label="Nhóm thành viên tiếp theo">›</button>
+            <button class="filmstrip-arrow" type="button" data-filmstrip-next aria-label="Nhóm thành viên tiếp theo" hidden><i data-lucide="chevron-right" aria-hidden="true"></i></button>
           </div>
-          <div class="filmstrip-meta">
-            <span data-filmstrip-page>1 / 4</span>
-            <span data-filmstrip-summary>Hiển thị 7 thành viên</span>
+          <div class="filmstrip-meta" hidden>
+            <span data-filmstrip-page>1 / 1</span>
+            <span data-filmstrip-summary>Hiển thị 1 thành viên</span>
           </div>
         </section>
 
@@ -124,9 +132,9 @@
           <div class="panel-header">
             <div>
               <p class="meeting-eyebrow" data-panel-eyebrow>Trong cuộc họp</p>
-              <h2 data-panel-title>Thành viên (24 / 50)</h2>
+            <h2 data-panel-title>Thành viên</h2>
             </div>
-            <button class="panel-close" type="button" data-close-panel aria-label="Đóng bảng">×</button>
+              <button class="panel-close" type="button" data-close-panel aria-label="Đóng bảng"><i data-lucide="x" aria-hidden="true"></i></button>
           </div>
 
           <section class="panel-content panel-content-chat" data-panel-content="chat" hidden>
@@ -135,43 +143,43 @@
             <form class="chat-form" data-chat-form>
               <label class="sr-only" for="meeting-chat-input">Tin nhắn</label>
               <input id="meeting-chat-input" name="message" maxlength="240" autocomplete="off" placeholder="Viết tin nhắn…" />
-              <button class="send-button" type="submit" aria-label="Gửi tin nhắn">↑</button>
+              <button class="send-button" type="submit" aria-label="Gửi tin nhắn"><i data-lucide="send" aria-hidden="true"></i></button>
             </form>
           </section>
 
           <section class="panel-content panel-content-participants" data-panel-content="participants" id="participant-tab-content" hidden>
             <label class="panel-search">
-              <span aria-hidden="true">⌕</span>
+              <i data-lucide="search" aria-hidden="true"></i>
               <span class="sr-only">Tìm thành viên</span>
               <input type="search" data-participant-search placeholder="Tìm kiếm thành viên..." autocomplete="off" />
             </label>
             <nav class="participant-tabs" data-participant-tabs role="tablist" aria-label="Bộ lọc thành viên">
-              <button type="button" role="tab" data-participant-tab="joined" aria-controls="participant-tab-content" aria-selected="true">Trong cuộc họp <span data-joined-count>24</span></button>
+              <button type="button" role="tab" data-participant-tab="joined" aria-controls="participant-tab-content" aria-selected="true">Trong cuộc họp <span data-joined-count>1</span></button>
               <button type="button" role="tab" data-participant-tab="waiting" aria-controls="participant-tab-content" aria-selected="false" hidden>Đang chờ <span data-waiting-count>0</span></button>
-              <button type="button" role="tab" data-participant-tab="hosts" aria-controls="participant-tab-content" aria-selected="false">Chủ trì <span data-host-count>2</span></button>
+              <button type="button" role="tab" data-participant-tab="hosts" aria-controls="participant-tab-content" aria-selected="false">Chủ trì <span data-host-count>0</span></button>
             </nav>
             <div class="presenter-section" data-presenter-section hidden>
               <p class="presenter-section-title" data-presenter-heading>Đang trình bày (1)</p>
               <ul class="presenter-list" data-presenter-list></ul>
             </div>
-            <p class="panel-helper" data-participant-helper>24 thành viên trong phòng</p>
+            <p class="panel-helper" data-participant-helper>1 thành viên trong phòng</p>
             <ul class="participants-list" data-participants-list></ul>
             <ul class="waiting-list" data-waiting-list hidden></ul>
             <p class="participant-empty" data-participant-empty hidden></p>
             <div class="panel-footer-actions">
-              <button class="panel-footer-button" type="button" data-panel-action="mute-all" data-mute-all hidden><span aria-hidden="true">⊘</span> Tắt tất cả micro</button>
-              <button class="panel-footer-button" type="button" data-panel-action="approve-all" data-approve-all hidden><span aria-hidden="true">✓</span> Chấp nhận tất cả</button>
-              <button class="panel-footer-button" type="button" data-panel-action="invite"><span aria-hidden="true">＋</span> Mời người</button>
-              <button class="panel-footer-button panel-footer-more" type="button" data-panel-action="more" aria-label="Thêm hành động">•••</button>
+              <button class="panel-footer-button" type="button" data-panel-action="mute-all" data-mute-all hidden><i data-lucide="mic-off" aria-hidden="true"></i> Tắt tất cả micro</button>
+              <button class="panel-footer-button" type="button" data-panel-action="approve-all" data-approve-all hidden><i data-lucide="circle-check" aria-hidden="true"></i> Chấp nhận tất cả</button>
+              <button class="panel-footer-button" type="button" data-panel-action="invite"><i data-lucide="user-plus" aria-hidden="true"></i> Mời người</button>
+              <button class="panel-footer-button panel-footer-more" type="button" data-panel-action="more" aria-label="Thêm hành động"><i data-lucide="ellipsis" aria-hidden="true"></i></button>
             </div>
           </section>
 
           <section class="panel-content panel-content-info" data-panel-content="info" hidden>
             <div class="info-card"><span>Chủ đề</span><strong data-info-title>Cuộc họp nhóm sản phẩm</strong></div>
             <div class="info-card"><span>Mã phòng</span><strong data-info-room>ABC-123-XYZ</strong></div>
-            <div class="info-card"><span>Người tổ chức</span><strong data-info-host>Nguyễn Hải Nam</strong></div>
+            <div class="info-card"><span>Người tổ chức</span><strong data-info-host>Chủ phòng</strong></div>
             <div class="info-card"><span>Bắt đầu lúc</span><strong data-info-started>—</strong></div>
-            <div class="info-card"><span>Sức chứa</span><strong>50 thành viên</strong></div>
+            <div class="info-card"><span>Sức chứa</span><strong data-info-capacity>—</strong></div>
             <p class="panel-note">Mã phòng chỉ là mã định danh. Quyền tham gia được xác nhận trước khi vào phòng.</p>
           </section>
         </aside>
@@ -180,23 +188,29 @@
       <footer class="meeting-toolbar" aria-label="Điều khiển cuộc họp">
         <div class="toolbar-main">
           <button class="toolbar-button toolbar-toggle is-on" type="button" data-toolbar-action="microphone" aria-pressed="true">
-            <span class="toolbar-icon" aria-hidden="true">♩</span><span>Micro</span><small data-toolbar-state="microphone">Đang bật</small>
+            <span class="toolbar-icon" data-toolbar-icon="microphone" aria-hidden="true"><i data-lucide="mic"></i></span><span>Micro</span><small data-toolbar-state="microphone">Đang bật</small>
           </button>
           <button class="toolbar-button toolbar-toggle is-on" type="button" data-toolbar-action="camera" aria-pressed="true">
-            <span class="toolbar-icon" aria-hidden="true">▣</span><span>Camera</span><small data-toolbar-state="camera">Đang bật</small>
+            <span class="toolbar-icon" data-toolbar-icon="camera" aria-hidden="true"><i data-lucide="video"></i></span><span>Camera</span><small data-toolbar-state="camera">Đang bật</small>
+          </button>
+          <button class="toolbar-button recording-button" type="button" data-toolbar-action="recording" data-recording-control hidden aria-pressed="false" aria-label="Bắt đầu ghi hình">
+            <span class="toolbar-icon" data-recording-icon aria-hidden="true"><i data-lucide="circle"></i></span><span data-recording-control-label>Ghi hình</span><small data-recording-control-state>Trên máy này</small>
+          </button>
+          <button class="toolbar-button recording-save-button" type="button" data-save-recording data-recording-toolbar-save hidden aria-label="Lưu bản ghi cuộc họp">
+            <span class="toolbar-icon" aria-hidden="true"><i data-lucide="download"></i></span><span>Lưu bản ghi</span><small>Sẵn sàng</small>
           </button>
           <button class="toolbar-button" type="button" data-toolbar-action="share" aria-pressed="false">
-            <span class="toolbar-icon" data-share-icon aria-hidden="true">↥</span><span data-share-label>Chia sẻ</span><small data-share-state>Màn hình</small>
+            <span class="toolbar-icon" data-share-icon aria-hidden="true"><i data-lucide="screen-share"></i></span><span data-share-label>Chia sẻ</span><small data-share-state>Màn hình</small>
           </button>
           <button class="toolbar-button toolbar-panel-button" type="button" data-panel-trigger="chat" aria-expanded="false">
-            <span class="toolbar-icon" aria-hidden="true">◌</span><span>Trò chuyện</span><small data-chat-label>Trao đổi</small><b class="unread-badge" data-chat-unread hidden>3</b>
+            <span class="toolbar-icon" aria-hidden="true"><i data-lucide="message-circle"></i></span><span>Trò chuyện</span><small data-chat-label>Trao đổi</small><b class="unread-badge" data-chat-unread hidden>3</b>
           </button>
           <button class="toolbar-button toolbar-panel-button" type="button" data-panel-trigger="participants" aria-expanded="false">
-            <span class="toolbar-icon" aria-hidden="true">◎</span><span>Thành viên</span><small data-member-label>24 người</small>
+            <span class="toolbar-icon" aria-hidden="true"><i data-lucide="users"></i></span><span>Thành viên</span><small data-member-label>1 người</small>
           </button>
           <div class="reaction-anchor">
             <button class="toolbar-button" type="button" data-reaction-toggle aria-expanded="false" aria-haspopup="menu">
-              <span class="toolbar-icon" aria-hidden="true">♡</span><span>Phản ứng</span><small>Cảm xúc</small>
+              <span class="toolbar-icon" aria-hidden="true"><i data-lucide="smile"></i></span><span>Phản ứng</span><small>Cảm xúc</small>
             </button>
             <div class="reaction-popover" data-reaction-popover role="menu" hidden>
               <div class="reaction-list">
@@ -206,55 +220,20 @@
                 <button type="button" role="menuitem" data-reaction="🎉" aria-label="Chúc mừng">🎉</button>
                 <button type="button" role="menuitem" data-reaction="👏" aria-label="Vỗ tay">👏</button>
               </div>
-              <button class="raise-hand-button" type="button" data-raise-hand>✋ <span data-raise-hand-label>Giơ tay</span></button>
+              <button class="raise-hand-button" type="button" data-raise-hand><i data-lucide="hand" aria-hidden="true"></i> <span data-raise-hand-label>Giơ tay</span></button>
             </div>
           </div>
           <button class="toolbar-button toolbar-more-mobile" type="button" data-panel-trigger="info" aria-expanded="false">
-            <span class="toolbar-icon" aria-hidden="true">•••</span><span>Thêm</span><small>Tùy chọn</small>
+            <span class="toolbar-icon" aria-hidden="true"><i data-lucide="ellipsis"></i></span><span>Thêm</span><small>Tùy chọn</small>
           </button>
         </div>
-        <button class="leave-button" type="button" data-leave-meeting><span aria-hidden="true">↗</span><span>Rời cuộc họp</span></button>
+        <button class="leave-button" type="button" data-leave-meeting><i data-lucide="phone-off" aria-hidden="true"></i><span>Rời cuộc họp</span></button>
       </footer>
 
       <div class="meeting-toast" data-toast role="status" aria-live="polite" hidden></div>
     </main>
 
-    <div class="meeting-modal-layer" data-modal-layer hidden>
-      <section class="meeting-dialog invite-dialog" data-dialog="invite" role="dialog" aria-modal="true" aria-labelledby="invite-dialog-title" hidden>
-        <button class="dialog-close" type="button" data-close-modal aria-label="Đóng">×</button>
-        <p class="meeting-eyebrow">Mời thành viên</p>
-        <h2 id="invite-dialog-title">Mời mọi người vào phòng</h2>
-        <p class="dialog-copy">Chia sẻ mã phòng hoặc liên kết này với người bạn muốn mời.</p>
-        <div class="invite-value"><span>Mã phòng</span><strong data-invite-room>ABC-123-XYZ</strong><button type="button" data-copy-room>⧉</button></div>
-        <div class="invite-value"><span>Liên kết cuộc họp</span><strong data-invite-link>…</strong><button type="button" data-copy-link>⧉</button></div>
-        <p class="capacity-note" data-invite-capacity hidden></p>
-        <button class="button button-primary dialog-primary" type="button" data-copy-link>Copy liên kết</button>
-      </section>
-
-      <section class="meeting-dialog leave-dialog" data-dialog="leave" role="dialog" aria-modal="true" aria-labelledby="leave-dialog-title" hidden>
-        <button class="dialog-close" type="button" data-close-modal aria-label="Đóng">×</button>
-        <p class="meeting-eyebrow">Kết thúc phiên</p>
-        <h2 id="leave-dialog-title">Bạn muốn làm gì?</h2>
-        <p class="dialog-copy" data-leave-copy>Bạn có thể rời cuộc họp mà không ảnh hưởng đến những người còn lại.</p>
-        <div class="leave-actions">
-          <button class="button button-secondary" type="button" data-leave-action="leave">Rời cuộc họp</button>
-          <button class="button button-danger" type="button" data-leave-action="end">Kết thúc cuộc họp cho tất cả</button>
-          <button class="dialog-cancel" type="button" data-close-modal>Hủy</button>
-        </div>
-      </section>
-
-      <section class="meeting-dialog confirm-dialog" data-dialog="confirm" role="dialog" aria-modal="true" aria-labelledby="confirm-dialog-title" hidden>
-        <button class="dialog-close" type="button" data-close-modal aria-label="Đóng">×</button>
-        <p class="meeting-eyebrow">Xác nhận thao tác</p>
-        <h2 id="confirm-dialog-title" data-confirm-title>Chỉ định đồng chủ trì?</h2>
-        <p class="dialog-copy" data-confirm-copy>Người này sẽ có thêm quyền quản lý người tham gia và phòng chờ.</p>
-        <div class="leave-actions">
-          <button class="button button-danger" type="button" data-confirm-action>Xác nhận</button>
-          <button class="dialog-cancel" type="button" data-close-modal>Hủy</button>
-        </div>
-      </section>
-    </div>
-
+    <script type="module" src="./js/app-analytics.js"></script>
     <script type="module" src="./js/meeting-room.js"></script>
   </body>
 </html>

@@ -5,18 +5,19 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content="Phòng chờ của FLASH MEETING." />
     <title>FLASH MEETING — Phòng chờ</title>
+    <link rel="icon" type="image/png" href="./assets/brand/flash-meeting-favicon.png" />
     <link rel="stylesheet" href="./css/base.css" />
     <link rel="stylesheet" href="./css/waiting-room.css" />
   </head>
-  <body class="waiting-room-page" data-waiting-state="initializing">
+  <body class="waiting-room-page" data-waiting-state="initializing" data-auth-guard-state="AUTH_INITIALIZING">
     <main class="waiting-shell" data-waiting-root aria-busy="true">
       <a class="brand waiting-brand" href="index.html" aria-label="FLASH MEETING - Trang chủ">
-        <span class="brand-mark" aria-hidden="true">F</span>
+        <img class="brand-logo" src="./assets/brand/flash-meeting-icon-64.png" alt="" width="40" height="40" />
         <span>FLASH <span class="brand-accent">MEETING</span></span>
       </a>
 
-      <section class="waiting-card" role="status" aria-live="polite" aria-busy="true" aria-labelledby="waiting-title">
-        <div class="waiting-status-icon" data-status-icon aria-hidden="true">◷</div>
+      <section class="waiting-card" role="status" aria-live="polite" aria-atomic="true" aria-busy="true" aria-labelledby="waiting-title" tabindex="-1">
+        <div class="waiting-status-icon" data-status-icon aria-hidden="true"><i data-lucide="loader-circle"></i></div>
         <p class="eyebrow waiting-eyebrow" data-status-kicker>Phòng chờ</p>
         <h1 id="waiting-title" data-status-title>Đang kiểm tra yêu cầu tham gia...</h1>
         <p class="waiting-copy" data-status-description>Đang khôi phục trạng thái yêu cầu của bạn.</p>
@@ -41,22 +42,20 @@
           <span data-status-line-text>Đang chờ</span>
         </div>
 
-        <div class="waiting-actions" data-waiting-actions hidden>
-          <a class="button button-primary" data-check-devices href="prejoin.html">Kiểm tra lại thiết bị</a>
-          <button class="button button-secondary" type="button" data-leave-waiting>Rời phòng chờ</button>
-        </div>
-
-        <div class="waiting-result-actions" data-result-actions hidden>
-          <a class="button button-primary" data-retry href="waiting-room.html">Thử lại</a>
-          <a class="button button-secondary" data-home-link href="index.html">Quay lại Trang chủ</a>
-          <a class="button button-secondary" data-join-another-link href="join-meeting.html" hidden>Tham gia cuộc họp khác</a>
-          <a class="button button-secondary" data-login-link href="login.html" hidden>Đăng nhập lại</a>
+        <div class="waiting-actions" data-state-actions hidden>
+          <a class="button button-secondary" data-check-devices href="prejoin.html"><i data-lucide="camera" aria-hidden="true"></i> Kiểm tra lại thiết bị</a>
+          <a class="button button-primary" data-retry href="waiting-room.html"><i data-lucide="refresh-cw" aria-hidden="true"></i> Thử lại</a>
+          <a class="button button-primary" data-home-link href="index.html"><i data-lucide="house" aria-hidden="true"></i> Quay lại Trang chủ</a>
+          <a class="button button-secondary" data-join-another-link href="join-meeting.html" hidden><i data-lucide="log-in" aria-hidden="true"></i> Tham gia cuộc họp khác</a>
+          <a class="button button-primary" data-login-link href="login.html" hidden><i data-lucide="log-in" aria-hidden="true"></i> Đăng nhập lại</a>
+          <button class="button button-secondary" type="button" data-leave-waiting><i data-lucide="log-out" aria-hidden="true"></i> Rời phòng chờ</button>
         </div>
 
         <p class="waiting-note" data-status-note hidden></p>
       </section>
     </main>
 
+    <script type="module" src="./js/app-analytics.js"></script>
     <script type="module" src="./js/meeting-waiting-room.js"></script>
   </body>
 </html>

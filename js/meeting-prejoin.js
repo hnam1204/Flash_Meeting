@@ -2,6 +2,7 @@ import { authService } from './auth-service.js';
 import {
   JOIN_MEETING_ERROR_CODES,
   MAX_MEETING_PARTICIPANTS,
+  START_MEETING_ERROR_CODES,
   meetingService
 } from './meeting-service.js';
 import {
@@ -11,6 +12,10 @@ import {
   readStoredRoomCode,
   setStatus
 } from './utils.js';
+import { getMediaPreferences, saveMediaPreferences } from './meeting-media.js';
+import { protectPage, registerAuthExpiryCleanup } from './auth-guard.js';
+import { modal } from './ui/modal-manager.js';
+import { renderIcons, setIcon } from './ui/icons.js';
 
 const PREJOIN_STATES = Object.freeze({
   INITIALIZING: 'initializing',
@@ -48,12 +53,16 @@ const cameraState = document.querySelector('[data-camera-state]');
 const meetingSummary = document.querySelector('[data-meeting-summary]');
 const meetingTitle = document.querySelector('[data-meeting-title]');
 const meetingMeta = document.querySelector('[data-meeting-meta]');
+const prejoinHeading = document.querySelector('[data-prejoin-heading]');
 const submitButton = document.querySelector('[data-prejoin-submit]');
 const submitLabel = document.querySelector('[data-prejoin-submit-label]');
 const cameraSelect = document.querySelector('[data-device-select="camera"]');
 const microphoneSelect = document.querySelector('[data-device-select="microphone"]');
 const cameraToggle = document.querySelector('[data-media-toggle="camera"]');
 const microphoneToggle = document.querySelector('[data-media-toggle="microphone"]');
+const submitIcon = document.querySelector('.prejoin-submit-icon');
+
+renderIcons();
 
 const state = {
   roomCode: '',
@@ -85,6 +94,25 @@ function setBanner(message, bannerState = 'info') {
   banner.hidden = !message;
   banner.textContent = message;
   banner.dataset.state = bannerState;
+}
+
+function persistMediaPreferences() {
+  return saveMediaPreferences({
+    cameraEnabled: state.cameraEnabled,
+    micEnabled: state.microphoneEnabled,
+    cameraDeviceId: state.selectedCameraId,
+    micDeviceId: state.selectedMicrophoneId
+  });
+}
+
+function applyStoredMediaPreferences() {
+  const preferences = getMediaPreferences();
+  state.cameraEnabled = preferences.cameraEnabled;
+  state.microphoneEnabled = preferences.micEnabled;
+  state.selectedCameraId = preferences.cameraDeviceId;
+  state.selectedMicrophoneId = preferences.micDeviceId;
+  state.cameraStatus = state.cameraEnabled ? MEDIA_STATUS.NO_DEVICE : MEDIA_STATUS.OFF;
+  state.microphoneStatus = state.microphoneEnabled ? MEDIA_STATUS.NO_DEVICE : MEDIA_STATUS.OFF;
 }
 
 function isOffline() {
@@ -152,13 +180,13 @@ function updateControlAvailability() {
     PREJOIN_STATES.ERROR
   ].includes(page.dataset.prejoinState);
   const offline = isOffline();
-  const hasCameraTrack = Boolean(state.mediaStream?.getVideoTracks().length);
-  const hasMicrophoneTrack = Boolean(state.mediaStream?.getAudioTracks().length);
+  const mediaAccessSupported = Boolean(navigator.mediaDevices?.getUserMedia);
 
-  cameraSelect.disabled = controlsLocked || state.cameraStatus === MEDIA_STATUS.NO_DEVICE;
-  microphoneSelect.disabled = controlsLocked || state.microphoneStatus === MEDIA_STATUS.NO_DEVICE;
-  cameraToggle.disabled = controlsLocked || !hasCameraTrack || state.cameraStatus === MEDIA_STATUS.DENIED;
-  microphoneToggle.disabled = controlsLocked || !hasMicrophoneTrack || state.microphoneStatus === MEDIA_STATUS.DENIED;
+  const deviceSelectionSupported = Boolean(navigator.mediaDevices?.enumerateDevices);
+  cameraSelect.disabled = controlsLocked || !deviceSelectionSupported || state.cameraStatus === MEDIA_STATUS.NO_DEVICE;
+  microphoneSelect.disabled = controlsLocked || !deviceSelectionSupported || state.microphoneStatus === MEDIA_STATUS.NO_DEVICE;
+  cameraToggle.disabled = controlsLocked || !mediaAccessSupported || state.cameraStatus === MEDIA_STATUS.NO_DEVICE || state.cameraStatus === MEDIA_STATUS.DENIED;
+  microphoneToggle.disabled = controlsLocked || !mediaAccessSupported || state.microphoneStatus === MEDIA_STATUS.NO_DEVICE || state.microphoneStatus === MEDIA_STATUS.DENIED;
   submitButton.disabled = controlsLocked || offline || !state.meeting;
 }
 
@@ -169,8 +197,8 @@ function setPreviewName(name) {
 
 function updatePreview() {
   const cameraTrack = state.mediaStream?.getVideoTracks()[0];
-  const cameraOn = Boolean(cameraTrack && cameraTrack.readyState === 'live' && cameraTrack.enabled);
-  state.cameraEnabled = cameraOn;
+  if (cameraTrack) state.cameraEnabled = cameraTrack.readyState === 'live' && cameraTrack.enabled;
+  const cameraOn = Boolean(state.cameraEnabled && cameraTrack && cameraTrack.readyState === 'live' && cameraTrack.enabled);
 
   video.hidden = !cameraOn;
   placeholder.hidden = cameraOn;
@@ -195,8 +223,10 @@ function updateMediaToggle(kind) {
   const enabled = Boolean(track && track.readyState === 'live' && track.enabled);
   const mediaStatus = isCamera ? state.cameraStatus : state.microphoneStatus;
   const stateElement = document.querySelector(`[data-${kind}-toggle-state]`);
+  const iconTarget = document.querySelector(`[data-media-icon="${kind}"]`);
 
   button.setAttribute('aria-pressed', String(enabled));
+  setIcon(iconTarget, enabled ? (isCamera ? 'video' : 'mic') : (isCamera ? 'video-off' : 'mic-off'));
   if (stateElement) {
     stateElement.textContent = mediaStatus === MEDIA_STATUS.NO_DEVICE
       ? 'Không tìm thấy thiết bị'
@@ -207,7 +237,8 @@ function updateMediaToggle(kind) {
 }
 
 function updateMediaUI() {
-  state.microphoneEnabled = Boolean(state.mediaStream?.getAudioTracks()[0]?.enabled);
+  const microphoneTrack = state.mediaStream?.getAudioTracks()[0];
+  if (microphoneTrack) state.microphoneEnabled = microphoneTrack.enabled;
   updatePreview();
   updateMediaToggle('camera');
   updateMediaToggle('microphone');
@@ -223,10 +254,10 @@ function setMeetingSummary(meeting) {
 }
 
 function updateAdmissionCopy() {
-  const isPrivilegedParticipant = Boolean(
-    state.participantContext?.isHost || state.participantContext?.isCoHost
-  );
-  submitLabel.textContent = isPrivilegedParticipant ? 'Bắt đầu cuộc họp' : 'Tham gia cuộc họp';
+  const isHost = Boolean(state.participantContext?.isHost);
+  if (prejoinHeading) prejoinHeading.textContent = isHost ? 'Sẵn sàng bắt đầu?' : 'Sẵn sàng tham gia?';
+  submitLabel.textContent = isHost ? 'Bắt đầu cuộc họp' : 'Tham gia cuộc họp';
+  setIcon(submitIcon, isHost ? 'video' : 'log-in');
 }
 
 function replaceTrack(kind, nextStream) {
@@ -273,9 +304,11 @@ async function requestTrack(kind, deviceId = '') {
 
     if (kind === 'camera') {
       state.cameraStatus = MEDIA_STATUS.ON;
+      state.cameraEnabled = true;
       state.selectedCameraId = nextStream.getVideoTracks()[0].getSettings().deviceId || deviceId;
     } else {
       state.microphoneStatus = MEDIA_STATUS.ON;
+      state.microphoneEnabled = true;
       state.selectedMicrophoneId = nextStream.getAudioTracks()[0].getSettings().deviceId || deviceId;
     }
     updateMediaUI();
@@ -283,8 +316,14 @@ async function requestTrack(kind, deviceId = '') {
   } catch (error) {
     const mediaStatus = error?.name === 'NotFoundError' ? MEDIA_STATUS.NO_DEVICE : MEDIA_STATUS.DENIED;
     const message = getMediaErrorMessage(kind, error);
-    if (kind === 'camera') state.cameraStatus = mediaStatus;
-    if (kind === 'microphone') state.microphoneStatus = mediaStatus;
+    if (kind === 'camera') {
+      state.cameraStatus = mediaStatus;
+      state.cameraEnabled = false;
+    }
+    if (kind === 'microphone') {
+      state.microphoneStatus = mediaStatus;
+      state.microphoneEnabled = false;
+    }
     setBanner(message, 'error');
     updateMediaUI();
     return false;
@@ -306,6 +345,8 @@ function populateDeviceSelect(kind, devices) {
 
   select.replaceChildren();
   if (!matchingDevices.length) {
+    if (kind === 'camera') state.cameraStatus = MEDIA_STATUS.NO_DEVICE;
+    if (kind === 'microphone') state.microphoneStatus = MEDIA_STATUS.NO_DEVICE;
     addDeviceOption(select, '', kind === 'camera' ? 'Không tìm thấy camera' : 'Không tìm thấy microphone');
     select.value = '';
     return;
@@ -328,8 +369,10 @@ function populateDeviceSelect(kind, devices) {
 
 async function refreshDevices() {
   if (!navigator.mediaDevices?.enumerateDevices) {
-    populateDeviceSelect('camera', []);
-    populateDeviceSelect('microphone', []);
+    state.cameraStatus = state.cameraEnabled ? MEDIA_STATUS.NO_DEVICE : MEDIA_STATUS.OFF;
+    state.microphoneStatus = state.microphoneEnabled ? MEDIA_STATUS.NO_DEVICE : MEDIA_STATUS.OFF;
+    cameraSelect.replaceChildren(new Option('Thiết bị mặc định', ''));
+    microphoneSelect.replaceChildren(new Option('Thiết bị mặc định', ''));
     updateMediaUI();
     return;
   }
@@ -351,6 +394,7 @@ function getErrorMessage(code) {
     [JOIN_MEETING_ERROR_CODES.MEETING_ENDED]: 'Cuộc họp đã kết thúc.',
     [JOIN_MEETING_ERROR_CODES.MEETING_CANCELLED]: 'Cuộc họp này đã bị hủy.',
     [JOIN_MEETING_ERROR_CODES.MEETING_LOCKED]: 'Cuộc họp hiện đang bị khóa.',
+    [JOIN_MEETING_ERROR_CODES.MEETING_NOT_STARTED]: 'Chủ phòng chưa bắt đầu cuộc họp. Vui lòng thử lại sau.',
     [JOIN_MEETING_ERROR_CODES.ROOM_FULL]: `Cuộc họp đã đủ ${MAX_MEETING_PARTICIPANTS} người tham gia.`,
     [JOIN_MEETING_ERROR_CODES.USER_BLOCKED]: 'Bạn không thể tham gia cuộc họp này.',
     [JOIN_MEETING_ERROR_CODES.NETWORK_ERROR]: 'Không có kết nối Internet. Vui lòng thử lại.',
@@ -360,14 +404,41 @@ function getErrorMessage(code) {
   return messages[code] ?? messages[JOIN_MEETING_ERROR_CODES.JOIN_FAILED];
 }
 
-function showMeetingError(code) {
+function showMeetingError(code, { title = 'Không thể tham gia cuộc họp', canRetry = false } = {}) {
   const message = getErrorMessage(code);
-  setPrejoinState(PREJOIN_STATES.ERROR);
-  setFormDisabled(true);
+  setPrejoinState(canRetry ? PREJOIN_STATES.READY : PREJOIN_STATES.ERROR);
+  setFormDisabled(!canRetry);
   form.setAttribute('aria-busy', 'false');
+  if (canRetry) submitLabel.textContent = state.participantContext?.isHost ? 'Bắt đầu cuộc họp' : 'Tham gia cuộc họp';
   setBanner(message, 'error');
   setStatusMessage(message, 'error');
   updateControlAvailability();
+  modal.error({
+    title,
+    message,
+    retryText: 'Thử lại',
+    onRetry: canRetry ? retryPrejoinSubmit : () => window.location.reload()
+  });
+}
+
+function showStartError() {
+  setPrejoinState(PREJOIN_STATES.READY);
+  setFormDisabled(false);
+  form.setAttribute('aria-busy', 'false');
+  updateAdmissionCopy();
+  setStatusMessage('Không thể bắt đầu cuộc họp. Vui lòng thử lại.', 'error');
+  updateControlAvailability();
+  modal.error({
+    title: 'Không thể bắt đầu cuộc họp',
+    message: 'Vui lòng thử lại.',
+    retryText: 'Thử lại',
+    onRetry: retryPrejoinSubmit
+  });
+}
+
+function retryPrejoinSubmit() {
+  if (page.dataset.prejoinState === PREJOIN_STATES.ERROR) setPrejoinState(PREJOIN_STATES.READY);
+  form?.requestSubmit();
 }
 
 function showOfflineState() {
@@ -422,13 +493,18 @@ async function initializeMedia() {
   if (!navigator.mediaDevices?.getUserMedia) {
     state.cameraStatus = MEDIA_STATUS.NO_DEVICE;
     state.microphoneStatus = MEDIA_STATUS.NO_DEVICE;
+    state.cameraEnabled = false;
+    state.microphoneEnabled = false;
     setBanner('Trình duyệt này chưa hỗ trợ truy cập thiết bị. Bạn vẫn có thể tiếp tục.', 'error');
   } else {
-    await requestTrack('camera', state.selectedCameraId);
-    await requestTrack('microphone', state.selectedMicrophoneId);
+    await refreshDevices();
+    if (state.cameraEnabled) await requestTrack('camera', state.selectedCameraId);
+    else if (state.cameraStatus !== MEDIA_STATUS.NO_DEVICE) state.cameraStatus = MEDIA_STATUS.OFF;
+    if (state.microphoneEnabled) await requestTrack('microphone', state.selectedMicrophoneId);
+    else if (state.microphoneStatus !== MEDIA_STATUS.NO_DEVICE) state.microphoneStatus = MEDIA_STATUS.OFF;
   }
 
-  await refreshDevices();
+  if (navigator.mediaDevices?.getUserMedia) await refreshDevices();
   setFormDisabled(false);
   form.setAttribute('aria-busy', 'false');
   setPrejoinState(
@@ -451,18 +527,37 @@ async function handleDeviceChange(kind, event) {
   const changed = await requestTrack(kind, nextId);
   if (!changed) event.target.value = previousId;
   await refreshDevices();
+  persistMediaPreferences();
   updateControlAvailability();
 }
 
-function toggleMedia(kind) {
+async function toggleMedia(kind) {
   const track = kind === 'camera'
     ? state.mediaStream?.getVideoTracks()[0]
     : state.mediaStream?.getAudioTracks()[0];
-  if (!track) return;
-
-  track.enabled = !track.enabled;
-  if (kind === 'camera') state.cameraEnabled = track.enabled;
-  if (kind === 'microphone') state.microphoneEnabled = track.enabled;
+  const enabled = kind === 'camera' ? state.cameraEnabled : state.microphoneEnabled;
+  if (enabled) {
+    if (track) track.enabled = false;
+    if (kind === 'camera') {
+      state.cameraEnabled = false;
+      state.cameraStatus = MEDIA_STATUS.OFF;
+    } else {
+      state.microphoneEnabled = false;
+      state.microphoneStatus = MEDIA_STATUS.OFF;
+    }
+  } else if (track) {
+    track.enabled = true;
+    if (kind === 'camera') {
+      state.cameraEnabled = true;
+      state.cameraStatus = MEDIA_STATUS.ON;
+    } else {
+      state.microphoneEnabled = true;
+      state.microphoneStatus = MEDIA_STATUS.ON;
+    }
+  } else {
+    await requestTrack(kind, kind === 'camera' ? state.selectedCameraId : state.selectedMicrophoneId);
+  }
+  persistMediaPreferences();
   updateMediaUI();
 }
 
@@ -474,13 +569,18 @@ async function loadMeeting() {
   }
 
   displayNameInput.value = getStoredDisplayName();
-  const result = await meetingService.resolveForJoin({
-    roomCode: state.roomCode,
-    displayName: displayNameInput.value,
-    phase: 'load'
-  });
+  let result;
+  try {
+    result = await meetingService.resolveForJoin({
+      roomCode: state.roomCode,
+      displayName: displayNameInput.value,
+      phase: 'load'
+    });
+  } catch {
+    result = { success: false, code: JOIN_MEETING_ERROR_CODES.NETWORK_ERROR };
+  }
   if (!result.success) {
-    showMeetingError(result.code);
+    showMeetingError(result.code, { title: 'Không thể mở cuộc họp' });
     return false;
   }
 
@@ -499,24 +599,40 @@ async function handleSubmit(event) {
   const displayName = validateDisplayName();
   if (!displayName) return;
   if (isOffline()) {
-    showMeetingError(JOIN_MEETING_ERROR_CODES.NETWORK_ERROR);
+    showMeetingError(JOIN_MEETING_ERROR_CODES.NETWORK_ERROR, { canRetry: true });
     return;
   }
 
   setPrejoinState(PREJOIN_STATES.JOINING);
   setFormDisabled(true);
   form.setAttribute('aria-busy', 'true');
-  submitLabel.textContent = 'Đang kiểm tra cuộc họp…';
-  setStatusMessage('Đang xác nhận thông tin cuộc họp…');
-
-  const result = await meetingService.resolveForJoin({
-    roomCode: state.roomCode,
-    displayName,
-    phase: 'join'
+  const isHost = Boolean(state.participantContext?.isHost);
+  submitLabel.textContent = isHost ? 'Đang bắt đầu cuộc họp…' : 'Đang kiểm tra cuộc họp…';
+  setStatusMessage(isHost ? 'Đang mở phòng họp của bạn…' : 'Đang xác nhận thông tin cuộc họp…');
+  modal.processing({
+    title: isHost ? 'Đang bắt đầu cuộc họp' : 'Đang tham gia cuộc họp',
+    message: isHost ? 'Đang mở phòng họp của bạn.' : 'Đang xác nhận thông tin cuộc họp.'
   });
+
+  let result;
+  try {
+    result = isHost
+      ? await meetingService.startMeeting({ roomCode: state.roomCode })
+      : await meetingService.resolveForJoin({
+        roomCode: state.roomCode,
+        displayName,
+        phase: 'join'
+      });
+  } catch {
+    result = { success: false, code: isHost ? START_MEETING_ERROR_CODES.START_MEETING_FAILED : JOIN_MEETING_ERROR_CODES.JOIN_FAILED };
+  }
   if (!result.success) {
-    setFormDisabled(false);
-    showMeetingError(result.code);
+    if (isHost && Object.values(START_MEETING_ERROR_CODES).includes(result.code)) {
+      showStartError();
+    } else {
+      setFormDisabled(false);
+      showMeetingError(result.code, { canRetry: true });
+    }
     return;
   }
 
@@ -524,10 +640,11 @@ async function handleSubmit(event) {
   state.participantContext = result.participantContext
     || meetingService.getCurrentParticipantContext(state.roomCode, result.meeting);
   setPrejoinState(PREJOIN_STATES.SUCCESS);
-  setStatusMessage('Đã sẵn sàng. Đang mở cuộc họp…', 'success');
+  setStatusMessage(isHost ? 'Cuộc họp đã bắt đầu. Đang mở phòng…' : 'Đã sẵn sàng. Đang mở cuộc họp…', 'success');
   sessionStorage.setItem('flashMeeting.roomCode', result.meeting.roomCode);
   sessionStorage.setItem('flashMeeting.displayName', result.participant.displayName);
   sessionStorage.setItem('flashMeeting.joinedMeeting', JSON.stringify(result.meeting));
+  persistMediaPreferences();
   cleanupMedia();
 
   const destination = meetingService.getAdmissionDestination(state.participantContext);
@@ -560,10 +677,14 @@ async function initialize() {
   setFormDisabled(true);
   setPreviewName('Khách tham gia');
   setPrejoinState(PREJOIN_STATES.INITIALIZING);
+  const sessionResult = await protectPage();
+  if (!sessionResult.success || !sessionResult.session) return;
   const meetingLoaded = await loadMeeting();
   if (!meetingLoaded) return;
+  applyStoredMediaPreferences();
   setPreviewName(displayNameInput.value);
   await initializeMedia();
 }
 
+registerAuthExpiryCleanup(cleanupMedia);
 initialize();

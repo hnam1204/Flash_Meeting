@@ -1,5 +1,6 @@
 import {
   JOIN_MEETING_ERROR_CODES,
+  MAX_MEETING_PARTICIPANTS,
   meetingService
 } from './meeting-service.js';
 import {
@@ -8,6 +9,9 @@ import {
   normalizeRoomCode,
   readStoredRoomCode
 } from './utils.js';
+import { protectPage, registerAuthExpiryCleanup } from './auth-guard.js';
+import { modal } from './ui/modal-manager.js';
+import { renderIcons, setIcon } from './ui/icons.js';
 
 const WAITING_STATES = Object.freeze({
   INITIALIZING: 'initializing',
@@ -26,21 +30,21 @@ const WAITING_STATES = Object.freeze({
   LEAVING: 'leaving'
 });
 
-const STATUS_COPY = Object.freeze({
-  initializing: { icon: '◷', kicker: 'Phòng chờ', title: 'Đang kiểm tra yêu cầu tham gia...', description: 'Đang khôi phục trạng thái yêu cầu của bạn.' },
-  waiting: { icon: '◷', kicker: 'Phòng chờ', title: 'Đang chờ được chấp nhận', description: 'Chủ phòng đã nhận được yêu cầu tham gia của bạn.', line: 'Đang chờ' },
-  reconnecting: { icon: '↻', kicker: 'Kết nối', title: 'Đang kết nối lại...', description: 'Yêu cầu tham gia của bạn vẫn được giữ lại.', line: 'Đang kết nối lại' },
-  approved: { icon: '✓', kicker: 'Đã được chấp nhận', title: 'Bạn đã được chấp nhận', description: 'Đang vào cuộc họp...', line: 'Đã chấp nhận' },
-  joining: { icon: '↗', kicker: 'Đang vào phòng', title: 'Đang vào cuộc họp...', description: 'Vui lòng chờ trong giây lát.', line: 'Đang mở phòng' },
-  rejected: { icon: '!', kicker: 'Yêu cầu tham gia', title: 'Yêu cầu tham gia không được chấp nhận', description: 'Bạn hiện chưa thể tham gia cuộc họp này.' },
-  room_full: { icon: '◎', kicker: 'Không thể tham gia', title: 'Cuộc họp đã đủ 50 người tham gia.', description: 'Phòng họp hiện không còn chỗ trống.' },
-  meeting_ended: { icon: '■', kicker: 'Cuộc họp đã kết thúc', title: 'Cuộc họp đã kết thúc.', description: 'Bạn không thể tham gia cuộc họp này nữa.' },
-  meeting_locked: { icon: '▣', kicker: 'Cuộc họp đang bị khóa', title: 'Cuộc họp hiện đang bị khóa.', description: 'Vui lòng liên hệ chủ phòng nếu bạn cần tham gia.' },
-  removed: { icon: '×', kicker: 'Không thể tham gia', title: 'Bạn không thể tham gia cuộc họp này.', description: 'Phiên tham gia của bạn đã kết thúc.' },
-  network_error: { icon: '⌁', kicker: 'Kết nối gặp vấn đề', title: 'Không có kết nối Internet.', description: 'Hãy kiểm tra kết nối rồi thử lại.' },
-  session_expired: { icon: '↪', kicker: 'Phiên đăng nhập', title: 'Phiên đăng nhập đã hết hạn.', description: 'Vui lòng đăng nhập lại để tiếp tục.' },
-  invalid: { icon: '!', kicker: 'Phòng chờ', title: 'Không thể mở phòng chờ.', description: 'Mã phòng không hợp lệ hoặc cuộc họp không tồn tại.' },
-  leaving: { icon: '↩', kicker: 'Phòng chờ', title: 'Đang rời phòng chờ...', description: 'Đang lưu thay đổi của bạn.' }
+const STATE_CONFIG = Object.freeze({
+  initializing: { icon: 'loader-circle', kicker: 'Phòng chờ', title: 'Đang tải phòng chờ...', description: 'Đang khôi phục trạng thái yêu cầu của bạn.', actions: [] },
+  waiting: { icon: 'clock-3', kicker: 'Phòng chờ', title: 'Đang chờ được chấp nhận', description: 'Chủ phòng đã nhận được yêu cầu tham gia của bạn.', line: 'Đang chờ', actions: ['devices', 'leave'] },
+  reconnecting: { icon: 'loader-circle', kicker: 'Kết nối', title: 'Đang kết nối lại...', description: 'Hệ thống đang khôi phục kết nối.', line: 'Đang kết nối lại', actions: ['leave'] },
+  approved: { icon: 'circle-check', kicker: 'Đã được chấp nhận', title: 'Đã được chấp nhận', description: 'Đang vào cuộc họp...', line: 'Đã chấp nhận', actions: [] },
+  joining: { icon: 'log-in', kicker: 'Đang vào phòng', title: 'Đang vào cuộc họp...', description: 'Vui lòng chờ trong giây lát.', line: 'Đang mở phòng', actions: [] },
+  rejected: { icon: 'circle-x', kicker: 'Yêu cầu tham gia', title: 'Yêu cầu tham gia chưa được chấp nhận', description: 'Bạn chưa thể tham gia cuộc họp này.', actions: ['home', 'joinAnother'] },
+  room_full: { icon: 'users', kicker: 'Không thể tham gia', title: 'Cuộc họp đã đủ người', description: `Cuộc họp hiện đã đạt giới hạn ${MAX_MEETING_PARTICIPANTS} người tham gia.`, actions: ['home', 'joinAnother'] },
+  meeting_ended: { icon: 'circle-stop', kicker: 'Cuộc họp đã kết thúc', title: 'Cuộc họp đã kết thúc', description: 'Cuộc họp này không còn hoạt động.', actions: ['home', 'joinAnother'] },
+  meeting_locked: { icon: 'lock-keyhole', kicker: 'Cuộc họp đang bị khóa', title: 'Cuộc họp hiện đang bị khóa.', description: 'Vui lòng liên hệ chủ phòng nếu bạn cần tham gia.', actions: ['home'] },
+  removed: { icon: 'user-round-x', kicker: 'Không thể tham gia', title: 'Bạn không thể tham gia cuộc họp này.', description: 'Phiên tham gia của bạn đã kết thúc.', actions: ['home'] },
+  network_error: { icon: 'signal', kicker: 'Kết nối gặp vấn đề', title: 'Không thể kết nối', description: 'Không thể duy trì kết nối với phòng chờ.', actions: ['retry', 'leave'] },
+  session_expired: { icon: 'log-in', kicker: 'Phiên đăng nhập', title: 'Phiên đăng nhập đã hết hạn', description: 'Vui lòng đăng nhập lại để tiếp tục.', actions: ['login'] },
+  invalid: { icon: 'circle-alert', kicker: 'Phòng chờ', title: 'Không thể mở phòng chờ.', description: 'Mã phòng không hợp lệ hoặc cuộc họp không tồn tại.', actions: ['home'] },
+  leaving: { icon: 'log-out', kicker: 'Phòng chờ', title: 'Đang rời phòng chờ...', description: 'Đang lưu thay đổi của bạn.', actions: [] }
 });
 
 const FINAL_STATES = new Set([
@@ -56,14 +60,15 @@ const root = document.querySelector('[data-waiting-root]');
 const statusRegion = document.querySelector('.waiting-card');
 const context = document.querySelector('[data-meeting-context]');
 const hostContext = document.querySelector('[data-host-context]');
-const waitingActions = document.querySelector('[data-waiting-actions]');
-const resultActions = document.querySelector('[data-result-actions]');
+const stateActions = document.querySelector('[data-state-actions]');
 const checkDevicesLink = document.querySelector('[data-check-devices]');
 const retryLink = document.querySelector('[data-retry]');
 const homeLink = document.querySelector('[data-home-link]');
 const joinAnotherLink = document.querySelector('[data-join-another-link]');
 const loginLink = document.querySelector('[data-login-link]');
 const leaveButton = document.querySelector('[data-leave-waiting]');
+
+renderIcons();
 
 const state = {
   status: WAITING_STATES.INITIALIZING,
@@ -141,35 +146,29 @@ function renderMeetingContext() {
 }
 
 function setActions(nextStatus) {
-  const canWait = [WAITING_STATES.WAITING, WAITING_STATES.RECONNECTING].includes(nextStatus);
-  const canShowResultActions = [
-    ...FINAL_STATES,
-    WAITING_STATES.NETWORK_ERROR,
-    WAITING_STATES.SESSION_EXPIRED,
-    WAITING_STATES.INVALID
-  ].includes(nextStatus);
-  const canJoinAnother = [WAITING_STATES.REJECTED, WAITING_STATES.ROOM_FULL].includes(nextStatus);
-
-  waitingActions.hidden = !canWait;
-  resultActions.hidden = !canShowResultActions;
-  retryLink.hidden = nextStatus !== WAITING_STATES.NETWORK_ERROR;
-  homeLink.hidden = !canShowResultActions;
-  joinAnotherLink.hidden = !canJoinAnother;
-  loginLink.hidden = nextStatus !== WAITING_STATES.SESSION_EXPIRED;
-  leaveButton.disabled = nextStatus === WAITING_STATES.RECONNECTING ? false : nextStatus !== WAITING_STATES.WAITING;
+  const actions = new Set(STATE_CONFIG[nextStatus]?.actions || []);
+  stateActions.hidden = actions.size === 0;
+  checkDevicesLink.hidden = !actions.has('devices');
+  leaveButton.hidden = !actions.has('leave');
+  retryLink.hidden = !actions.has('retry');
+  homeLink.hidden = !actions.has('home');
+  joinAnotherLink.hidden = !actions.has('joinAnother');
+  loginLink.hidden = !actions.has('login');
+  leaveButton.disabled = !actions.has('leave');
   setPrejoinLink();
   setLoginLink();
   setJoinAnotherLink();
 }
 
 function setState(nextStatus, note = '') {
-  const copy = STATUS_COPY[nextStatus] || STATUS_COPY.invalid;
+  const previousStatus = state.status;
+  const copy = STATE_CONFIG[nextStatus] || STATE_CONFIG[WAITING_STATES.INVALID];
   state.status = nextStatus;
   page.dataset.waitingState = nextStatus;
   root.setAttribute('aria-busy', String([WAITING_STATES.INITIALIZING, WAITING_STATES.RECONNECTING, WAITING_STATES.JOINING, WAITING_STATES.LEAVING].includes(nextStatus)));
   statusRegion.setAttribute('aria-busy', String([WAITING_STATES.INITIALIZING, WAITING_STATES.RECONNECTING, WAITING_STATES.JOINING, WAITING_STATES.LEAVING].includes(nextStatus)));
   statusRegion.setAttribute('role', [WAITING_STATES.NETWORK_ERROR, WAITING_STATES.SESSION_EXPIRED, WAITING_STATES.INVALID].includes(nextStatus) ? 'alert' : 'status');
-  setText('[data-status-icon]', copy.icon);
+  setIcon(document.querySelector('[data-status-icon]'), copy.icon);
   setText('[data-status-kicker]', copy.kicker);
   setText('[data-status-title]', copy.title);
   setText('[data-status-description]', copy.description);
@@ -181,6 +180,20 @@ function setState(nextStatus, note = '') {
   if (note) noteElement.textContent = note;
   renderMeetingContext();
   setActions(nextStatus);
+
+  const needsAnnouncement = [
+    WAITING_STATES.REJECTED,
+    WAITING_STATES.ROOM_FULL,
+    WAITING_STATES.MEETING_ENDED,
+    WAITING_STATES.MEETING_LOCKED,
+    WAITING_STATES.REMOVED,
+    WAITING_STATES.NETWORK_ERROR,
+    WAITING_STATES.SESSION_EXPIRED,
+    WAITING_STATES.INVALID
+  ].includes(nextStatus);
+  if (previousStatus !== nextStatus && needsAnnouncement) {
+    window.requestAnimationFrame(() => statusRegion.focus({ preventScroll: true }));
+  }
 }
 
 function mapErrorToState(code) {
@@ -260,20 +273,46 @@ function handleOnline() {
   if (state.status === WAITING_STATES.NETWORK_ERROR && getMockScenario() !== 'network-error') initialize();
 }
 
-function handleLeave() {
+async function handleLeave() {
   if (state.leaving) return;
+  const confirmed = await modal.confirm({
+    title: 'Rời phòng chờ?',
+    message: 'Yêu cầu tham gia của bạn sẽ được hủy.',
+    confirmText: 'Rời phòng chờ',
+    cancelText: 'Ở lại'
+  });
+  if (!confirmed || state.leaving) return;
+
   state.leaving = true;
   clearWatcher();
   clearJoinTimer();
   setState(WAITING_STATES.LEAVING);
-  meetingService.withdrawWaitingRequest({ roomCode: state.roomCode });
+  modal.processing({ title: 'Đang rời phòng chờ', message: 'Vui lòng chờ trong giây lát.' });
+  let result;
+  try {
+    result = await meetingService.withdrawWaitingRequest({ roomCode: state.roomCode });
+  } catch {
+    result = { success: false };
+  }
+  if (!result?.success) {
+    state.leaving = false;
+    setState(WAITING_STATES.WAITING);
+    modal.error({
+      title: 'Không thể rời phòng chờ',
+      message: 'Vui lòng thử lại.',
+      retryText: 'Thử lại',
+      onRetry: () => { void handleLeave(); }
+    });
+    return;
+  }
   try {
     sessionStorage.removeItem('flashMeeting.roomCode');
     sessionStorage.removeItem('flashMeeting.joinedMeeting');
   } catch {
     // Session storage is optional in mock mode.
   }
-  window.setTimeout(() => { window.location.href = getPageUrl('index.html'); }, 180);
+  modal.success({ title: 'Đã rời phòng chờ', message: 'Yêu cầu tham gia đã được hủy.', autoCloseMs: 500 });
+  window.setTimeout(() => { window.location.href = getPageUrl('join-meeting.html'); }, 560);
 }
 
 async function initialize() {
@@ -286,15 +325,30 @@ async function initialize() {
   state.leaving = false;
   setState(WAITING_STATES.INITIALIZING);
 
+  const sessionResult = await protectPage();
+  if (!sessionResult.success || !sessionResult.session) return;
+
   if (!state.roomCode || isOffline()) {
     setState(isOffline() ? WAITING_STATES.NETWORK_ERROR : WAITING_STATES.INVALID);
     return;
   }
 
-  const result = await meetingService.getWaitingRoom({
-    roomCode: state.roomCode,
-    displayName: readStoredDisplayName()
-  });
+  let result;
+  try {
+    result = await meetingService.getWaitingRoom({
+      roomCode: state.roomCode,
+      displayName: readStoredDisplayName()
+    });
+  } catch {
+    setState(WAITING_STATES.NETWORK_ERROR, 'Bạn có thể thử lại khi kết nối ổn định hơn.');
+    modal.error({
+      title: 'Không thể mở phòng chờ',
+      message: 'Vui lòng thử lại.',
+      retryText: 'Thử lại',
+      onRetry: () => { void initialize(); }
+    });
+    return;
+  }
   if (!result.success) {
     setState(mapErrorToState(result.code));
     return;
@@ -337,4 +391,9 @@ window.addEventListener('online', handleOnline);
 window.addEventListener('pagehide', clearWatcher, { once: true });
 
 // TODO Realtime Phase: replace the mock waiting-request subscription with Supabase Realtime after backend authorization is implemented.
+registerAuthExpiryCleanup(() => {
+  clearWatcher();
+  clearJoinTimer();
+  if (!state.leaving) setState(WAITING_STATES.SESSION_EXPIRED);
+});
 initialize();
