@@ -42,6 +42,14 @@ import {
 import { getPageUrl } from './utils.js';
 import { protectPage, registerAuthExpiryCleanup, revalidateSessionSilently } from './auth-guard.js';
 import { createMeetingRecordingController, RECORDING_STATES } from './meeting-recording.js';
+import { createLiveKitRoomController } from './livekit-room-controller.js';
+import {
+  createMeetingRealtimeController,
+  getMeetingSessionId,
+  normalizeRealtimeParticipant,
+  normalizeRealtimeMessage,
+  requestLiveKitToken
+} from './meeting-realtime.js';
 import { modal } from './ui/modal-manager.js';
 import { createIcon, renderIcons, setIcon } from './ui/icons.js';
 
@@ -58,6 +66,7 @@ const MEDIA_STATUS = Object.freeze({
   UNAVAILABLE: 'UNAVAILABLE',
   ERROR: 'ERROR'
 });
+const ALLOWED_REACTIONS = new Set(['👍', '❤️', '😂', '🎉', '👏', '😮']);
 
 const names = [
   'Minh Anh', 'Quang Huy', 'Lan Chi', 'Đức Minh', 'Hà My', 'Bảo Ngọc', 'Tuấn Khang',
@@ -124,6 +133,13 @@ const state = {
   isCleaningUp: false,
   deviceChangeBound: false,
   unsubscribeMeetingEvents: null,
+  meetingRealtime: null,
+  liveKit: null,
+  meetingId: meetingContext.meeting?.id || getStoredJoinedMeeting()?.id || '',
+  sessionId: getMeetingSessionId(),
+  participantId: '',
+  liveKitConnected: false,
+  localParticipantIdentity: '',
   meetingEndHandled: false,
   recording: {
     status: RECORDING_STATES.IDLE,
@@ -205,11 +221,15 @@ function getRoomCode() {
 }
 
 function getMeetingTitle() {
+  return getStoredJoinedMeeting()?.title || 'Cuộc họp nhóm sản phẩm';
+}
+
+function getStoredJoinedMeeting() {
   try {
     const storedMeeting = JSON.parse(readSession('flashMeeting.joinedMeeting') || 'null');
-    return storedMeeting?.title || 'Cuộc họp nhóm sản phẩm';
+    return storedMeeting && typeof storedMeeting === 'object' ? storedMeeting : null;
   } catch {
-    return 'Cuộc họp nhóm sản phẩm';
+    return null;
   }
 }
 
@@ -271,11 +291,13 @@ function getInitials(name) {
 }
 
 function createParticipants() {
-  const count = getParticipantCount();
+  const count = isDemoMode ? getParticipantCount() : 1;
+  let storedParticipant = null;
+  try { storedParticipant = JSON.parse(readSession('flashMeeting.joinedParticipant') || 'null'); } catch { storedParticipant = null; }
   const localCameraEnabled = isDemoMode ? scenario !== 'camera-off' : state.localMedia.cameraPreference;
   const localMicrophoneEnabled = isDemoMode ? scenario !== 'mic-off' : state.localMedia.microphonePreference;
   const local = {
-    id: 'local',
+    id: storedParticipant?.id || 'local',
     name: state.displayName,
     role: state.role,
     local: true,
@@ -441,6 +463,17 @@ function createParticipantVisual(participant) {
     visual.append(video);
     return visual;
   }
+  if (!participant.local && participant.cameraEnabled && participant.cameraTrack && state.liveKit) {
+    const video = document.createElement('video');
+    video.className = 'participant-video';
+    video.autoplay = true;
+    video.muted = true;
+    video.playsInline = true;
+    video.setAttribute('aria-label', `Camera của ${participant.name}`);
+    state.liveKit.attachRemoteTrack(participant.livekitIdentity, 'camera', video);
+    visual.append(video);
+    return visual;
+  }
   const avatar = document.createElement('span');
   avatar.className = 'participant-avatar';
   avatar.textContent = getInitials(participant.name);
@@ -516,16 +549,22 @@ function renderActiveStage() {
   mediaElement.classList.remove('stage-media-indigo', 'stage-media-amber', 'stage-media-mint', 'stage-media-camera-off');
   mediaElement.classList.add(active.cameraEnabled ? `stage-media-${active.id === 'participant-1' ? 'indigo' : active.id === 'participant-2' ? 'amber' : 'mint'}` : 'stage-media-camera-off');
   const showLocalVideo = Boolean(active.local && active.cameraEnabled && isCameraStreamHealthy() && localVideo);
-  mediaElement.classList.toggle('has-live-video', showLocalVideo);
+  const showRemoteVideo = Boolean(!active.local && active.cameraEnabled && active.cameraTrack && active.livekitIdentity && state.liveKit && localVideo);
+  mediaElement.classList.toggle('has-live-video', showLocalVideo || showRemoteVideo);
   if (localVideo) {
-    localVideo.hidden = !showLocalVideo;
+    localVideo.hidden = !showLocalVideo && !showRemoteVideo;
+    localVideo.muted = true;
     if (showLocalVideo && localVideo.srcObject !== state.localMedia.cameraStream) {
       localVideo.srcObject = state.localMedia.cameraStream;
       localVideo.play().catch(() => {});
     }
-    if (!showLocalVideo) localVideo.srcObject = null;
+    if (showRemoteVideo) {
+      localVideo.srcObject = null;
+      state.liveKit.attachRemoteTrack(active.livekitIdentity, 'camera', localVideo);
+    }
+    if (!showLocalVideo && !showRemoteVideo) localVideo.srcObject = null;
   }
-  avatar.hidden = showLocalVideo;
+  avatar.hidden = showLocalVideo || showRemoteVideo;
   avatar.textContent = getInitials(active.name);
   setText('[data-active-name]', active.local ? `${active.name} (Bạn)` : active.name);
   setText('[data-active-role]', getParticipantRoleLabel(active.role));
@@ -864,7 +903,7 @@ async function openModerationConfirmation(action, targetId = null) {
   state.moderationActionInFlight = true;
   modal.processing({ title: copy.processingTitle, message: 'Vui lòng chờ trong giây lát.' });
   await new Promise((resolve) => window.setTimeout(resolve, 180));
-  const result = applyModerationAction(action, targetId, { showFeedback: false });
+  const result = await applyModerationAction(action, targetId, { showFeedback: false });
   state.moderationActionInFlight = false;
   if (!result.success) {
     modal.error({
@@ -884,7 +923,7 @@ async function runModerationActionWithFeedback(action, targetId) {
   state.moderationActionInFlight = true;
   modal.processing({ title: 'Đang cập nhật thành viên', message: 'Vui lòng chờ trong giây lát.' });
   await new Promise((resolve) => window.setTimeout(resolve, 180));
-  const result = applyModerationAction(action, targetId, { showFeedback: false });
+  const result = await applyModerationAction(action, targetId, { showFeedback: false });
   state.moderationActionInFlight = false;
   if (!result.success) {
     modal.error({
@@ -898,7 +937,7 @@ async function runModerationActionWithFeedback(action, targetId) {
   modal.success({ title: 'Đã tắt micro', message: `${target?.name || 'Thành viên'} đã được tắt micro.`, autoCloseMs: 1400 });
 }
 
-function applyModerationAction(action, targetId, { showFeedback = true } = {}) {
+async function applyModerationAction(action, targetId, { showFeedback = true } = {}) {
   const target = targetId ? findParticipant(targetId) : null;
   if (target && !canUseHostAction(state.role, target, action)) {
     const message = 'Bạn không có quyền thực hiện thao tác này.';
@@ -909,6 +948,34 @@ function applyModerationAction(action, targetId, { showFeedback = true } = {}) {
     const message = getHostActionFailureMessage(action);
     if (showFeedback) showToast(message);
     return { success: false, message };
+  }
+
+  if (!isDemoMode) {
+    if (action === 'muteAll') {
+      const results = await Promise.all(getParticipants()
+        .filter((participant) => !participant.local && participant.microphoneEnabled)
+        .map((participant) => meetingService.moderateMeetingParticipant({
+          meetingId: state.meetingId,
+          participantId: participant.id,
+          action: HOST_ACTIONS.MUTE
+        })));
+      const failed = results.find((result) => !result.success);
+      if (failed) return { success: false, message: 'Không thể tắt micro của thành viên.' };
+      if (showFeedback) showToast('Đã tắt micro của người tham gia.');
+      return { success: true };
+    }
+    if (!target) return { success: false, message: 'Không tìm thấy thành viên.' };
+    const backendAction = action === HOST_ACTIONS.SHARE_PERMISSION ? HOST_ACTIONS.SHARE_PERMISSION : action;
+    const result = await meetingService.moderateMeetingParticipant({
+      meetingId: state.meetingId,
+      participantId: target.id,
+      action: backendAction,
+      value: action === HOST_ACTIONS.SHARE_PERMISSION ? !target.shareScreenAllowed : null
+    });
+    if (!result.success) return { success: false, message: getHostActionFailureMessage(action) };
+    if (result.participant) mergeRealtimeParticipant(result.participant);
+    if (showFeedback) showToast(`${target.name} đã được cập nhật.`);
+    return { success: true };
   }
 
   if (action === HOST_ACTIONS.MUTE && target) {
@@ -965,7 +1032,7 @@ function handleParticipantAction(action, participantId) {
     return;
   }
   closeParticipantMenu();
-  applyModerationAction(action, participantId);
+  void applyModerationAction(action, participantId);
 }
 
 function handleWaitingAction(action, waitingId) {
@@ -979,6 +1046,17 @@ function handleWaitingAction(action, waitingId) {
   }
   const waiting = state.waitingParticipants.find((participant) => participant.id === waitingId);
   if (!waiting) return;
+  if (!isDemoMode) {
+    void meetingService.moderateMeetingParticipant({
+      meetingId: state.meetingId,
+      participantId: waitingId,
+      action: action === 'approve' ? 'approve' : 'reject'
+    }).then((result) => {
+      if (!result.success) showToast(result.code === 'ROOM_FULL' ? `Cuộc họp đã đủ ${MAX_PARTICIPANTS} người.` : 'Không thể xử lý yêu cầu tham gia.');
+      else showToast(action === 'approve' ? `${waiting.name} đã được chấp nhận vào phòng.` : `${waiting.name} đã bị từ chối vào phòng.`);
+    });
+    return;
+  }
   state.waitingParticipants = state.waitingParticipants.filter((participant) => participant.id !== waitingId);
   if (action === 'reject') {
     showToast(`${waiting.name} đã bị từ chối vào phòng.`);
@@ -1007,7 +1085,7 @@ function handleWaitingAction(action, waitingId) {
   render();
 }
 
-function handleApproveAll() {
+async function handleApproveAll() {
   if (!['host', 'co-host'].includes(state.role)) {
     showToast('Bạn không có quyền xử lý yêu cầu tham gia.');
     return;
@@ -1018,6 +1096,19 @@ function handleApproveAll() {
   }
   if (shouldFailModeration('waiting')) {
     showToast('Không thể xử lý yêu cầu tham gia.');
+    return;
+  }
+
+  if (!isDemoMode) {
+    const waiting = [...state.waitingParticipants];
+    const results = await Promise.all(waiting.map((participant) => meetingService.moderateMeetingParticipant({
+      meetingId: state.meetingId,
+      participantId: participant.id,
+      action: 'approve'
+    })));
+    const failed = results.filter((result) => !result.success);
+    if (failed.length) showToast(failed.some((result) => result.code === 'ROOM_FULL') ? `Cuộc họp đã đủ ${MAX_PARTICIPANTS} người.` : 'Không thể xử lý tất cả yêu cầu.');
+    else showToast(`Đã chấp nhận ${waiting.length} người.`);
     return;
   }
 
@@ -1121,14 +1212,24 @@ function renderShareSupport() {
   const shareButton = document.querySelector('[data-toolbar-action="share"]');
   const supportNote = document.querySelector('[data-share-support-note]');
   const supported = isScreenShareSupported();
+  const localShareAllowed = getLocalParticipant()?.shareScreenAllowed !== false;
+  const remotePresenter = state.screenShare.active && !state.screenShare.isLocalPresenter
+    ? findParticipant(state.screenShare.presenterId)
+    : null;
   const requesting = state.screenShare.status === SCREEN_SHARE_STATES.REQUESTING;
   const stopping = state.screenShare.status === SCREEN_SHARE_STATES.STOPPING;
   if (shareButton) {
-    shareButton.disabled = requesting || stopping || (!supported && !state.screenShare.isLocalPresenter);
+    shareButton.disabled = requesting || stopping || !localShareAllowed || Boolean(remotePresenter) || (!supported && !state.screenShare.isLocalPresenter);
     if (requesting) {
       setIcon(document.querySelector('[data-share-icon]'), 'loader-circle');
       setText('[data-share-label]', 'Đang mở…');
       setText('[data-share-state]', 'Chọn nguồn');
+    } else if (!localShareAllowed) {
+      shareButton.title = 'Chủ trì đã tắt quyền chia sẻ màn hình của bạn.';
+      shareButton.setAttribute('aria-label', 'Chia sẻ màn hình đã bị tắt');
+    } else if (remotePresenter) {
+      shareButton.title = `${remotePresenter.name || 'Thành viên'} đang chia sẻ màn hình.`;
+      shareButton.setAttribute('aria-label', 'Đang có người chia sẻ màn hình');
     } else if (!supported) {
       shareButton.title = 'Thiết bị hoặc trình duyệt này chưa hỗ trợ chia sẻ màn hình.';
       shareButton.setAttribute('aria-label', 'Chia sẻ màn hình không khả dụng trên thiết bị này');
@@ -1230,11 +1331,15 @@ function renderPresentation() {
     cameraPip.hidden = true;
     cameraPip.srcObject = null;
   }
-  remoteSharePlaceholder.hidden = !presenter;
+  const hasRemoteTrack = Boolean(!localPresenter && presenter?.livekitIdentity && state.screenShare.track && state.liveKit
+    && state.liveKit.attachRemoteTrack(presenter.livekitIdentity, 'screen_share', video));
+  video.hidden = !hasRemoteTrack;
+  remoteSharePlaceholder.hidden = !presenter || hasRemoteTrack;
   presentationEmpty.hidden = Boolean(presenter);
 }
 
 function render() {
+  state.liveKit?.detachAllTracks?.();
   renderActiveStage();
   renderFilmstrip();
   renderView();
@@ -1691,6 +1796,7 @@ async function recoverLocalMedia(kind) {
     } else {
       media.setMicrophoneEnabled(true);
     }
+    await syncLiveKitMediaTrack(kind);
     syncLocalParticipant();
     return { success: true, reused: true };
   }
@@ -1707,6 +1813,7 @@ async function recoverLocalMedia(kind) {
     state.localMedia[statusKey] = MEDIA_STATUS.LIVE;
     if (isCamera) media.setCameraEnabled(true);
     else media.setMicrophoneEnabled(true);
+    await syncLiveKitMediaTrack(kind);
     syncLocalParticipant();
     persistLocalMediaPreferences();
     render();
@@ -1803,7 +1910,33 @@ async function toggleLocalMedia(kind) {
 
   persistLocalMediaPreferences();
   state.participants.upsert({ ...local, [enabledKey]: state.localMedia[enabledKey] });
+  const transportResult = await syncLiveKitMediaTrack(kind);
+  if (!transportResult.success && !isDemoMode) showToast('Không thể cập nhật thiết bị trong cuộc họp.');
+  const mediaStateResult = await meetingService.setMeetingMediaState({
+    meetingId: state.meetingId,
+    cameraEnabled: state.localMedia.cameraEnabled,
+    microphoneEnabled: state.localMedia.microphoneEnabled
+  });
+  if (!mediaStateResult.success && !isDemoMode) showToast('Không thể đồng bộ trạng thái thiết bị.');
   render();
+}
+
+async function syncLiveKitMediaTrack(kind) {
+  if (!state.liveKit || !state.liveKitConnected) return { success: true };
+  const isCamera = kind === 'camera';
+  const enabledKey = isCamera ? 'cameraEnabled' : 'microphoneEnabled';
+  const track = isCamera ? getLiveCameraTrack() : getLiveMicrophoneTrack();
+  if (state.localMedia[enabledKey] && track) {
+    const publishResult = isCamera
+      ? await state.liveKit.publishCamera(track)
+      : await state.liveKit.publishMicrophone(track);
+    if (!publishResult.success) return publishResult;
+  }
+  const enabledResult = isCamera
+    ? await state.liveKit.setCameraEnabled(state.localMedia[enabledKey])
+    : await state.liveKit.setMicrophoneEnabled(state.localMedia[enabledKey]);
+  if (!enabledResult.success && enabledResult.success !== 'NOT_PUBLISHED') return enabledResult;
+  return { success: true };
 }
 
 async function handleShare() {
@@ -1813,6 +1946,15 @@ async function handleShare() {
     } else {
       showToast('Hiện đang có người trình bày.');
     }
+    return;
+  }
+
+  if (state.screenShare.presenterId && !state.screenShare.isLocalPresenter) {
+    showToast('Hiện đang có người trình bày.');
+    return;
+  }
+  if (getLocalParticipant()?.shareScreenAllowed === false) {
+    showToast('Chủ trì đã tắt quyền chia sẻ màn hình của bạn.');
     return;
   }
 
@@ -1845,6 +1987,14 @@ async function handleStopPresentation() {
 }
 
 function handleReaction(reaction) {
+  if (!ALLOWED_REACTIONS.has(reaction)) return;
+  void state.liveKit?.publishData({
+    type: 'reaction',
+    meetingId: state.meetingId,
+    participantId: state.participantId,
+    value: reaction,
+    sentAt: Date.now()
+  });
   showToast(`Bạn đã gửi ${reaction}`);
   document.querySelector('[data-reaction-popover]').hidden = true;
   document.querySelector('[data-reaction-toggle]').setAttribute('aria-expanded', 'false');
@@ -1852,8 +2002,16 @@ function handleReaction(reaction) {
 
 function toggleRaiseHand() {
   const local = getLocalParticipant();
-  state.participants.upsert({ ...local, handRaised: !local.handRaised });
-  showToast(local.handRaised ? 'Bạn đã hạ tay.' : 'Bạn đã giơ tay.');
+  const handRaised = !local.handRaised;
+  state.participants.upsert({ ...local, handRaised });
+  void state.liveKit?.publishData({ type: 'hand', value: handRaised });
+  void meetingService.setMeetingMediaState({
+    meetingId: state.meetingId,
+    cameraEnabled: state.localMedia.cameraEnabled,
+    microphoneEnabled: state.localMedia.microphoneEnabled,
+    handRaised
+  });
+  showToast(handRaised ? 'Bạn đã giơ tay.' : 'Bạn đã hạ tay.');
   render();
 }
 
@@ -1898,12 +2056,20 @@ function startActiveSpeakerMock() {
   }, 9000);
 }
 
-function handleChatSubmit(event) {
+async function handleChatSubmit(event) {
   event.preventDefault();
   const input = event.currentTarget.elements.message;
   const content = String(input.value ?? '').trim();
   if (!content) return;
-  state.messages.push({ author: state.displayName, content });
+  if (!isDemoMode) {
+    const result = await state.meetingRealtime?.sendMessage(content);
+    if (!result?.success) {
+      showToast('Không thể gửi tin nhắn.');
+      return;
+    }
+  } else {
+    state.messages.push({ author: state.displayName, content });
+  }
   input.value = '';
   renderChat();
   input.focus();
@@ -1913,7 +2079,8 @@ function handleParticipantSearch() {
   if (state.panel === 'participants') renderParticipantsPanel();
 }
 
-function handleScreenShareState(nextState) {
+async function handleScreenShareState(nextState) {
+  const wasLocalPresenter = state.screenShare.isLocalPresenter;
   state.screenShare = {
     active: Boolean(nextState.active),
     presenterId: nextState.presenterId,
@@ -1924,7 +2091,395 @@ function handleScreenShareState(nextState) {
     status: nextState.status || (nextState.active ? SCREEN_SHARE_STATES.LIVE : SCREEN_SHARE_STATES.IDLE)
   };
   state.localMedia.isScreenSharing = state.screenShare.isLocalPresenter;
+  if (state.liveKit && state.liveKitConnected) {
+    if (state.screenShare.isLocalPresenter && state.screenShare.track) {
+      void state.liveKit.publishScreenShare(state.screenShare.track);
+    } else if (wasLocalPresenter && !state.screenShare.active) {
+      void state.liveKit.stopScreenShare();
+    }
+  }
+  const localPresenterTransition = state.screenShare.isLocalPresenter || wasLocalPresenter;
+  if (!isDemoMode && state.meetingRealtime && state.meetingId && localPresenterTransition) {
+    const result = await state.meetingRealtime.setScreenShareState(state.screenShare.active);
+    if (!result.success && state.screenShare.active) {
+      stopScreenShare({ source: 'server' });
+      showToast(result.code === 'SCREEN_SHARE_ACTIVE' ? 'Hiện đang có người trình bày.' : 'Không thể đồng bộ chia sẻ màn hình.');
+      return;
+    }
+  }
   render();
+}
+
+function toUiParticipant(value, { local = false } = {}) {
+  const participant = normalizeRealtimeParticipant(value) || value;
+  if (!participant?.id && !participant?.livekitIdentity) return null;
+  return {
+    ...participant,
+    id: participant.id || participant.livekitIdentity,
+    name: participant.name || participant.displayName || 'Gmail user',
+    local,
+    role: participant.role || PARTICIPANT_ROLES.MEMBER,
+    cameraEnabled: Boolean(participant.cameraEnabled),
+    microphoneEnabled: Boolean(participant.microphoneEnabled),
+    shareScreenAllowed: participant.shareScreenAllowed !== false,
+    handRaised: Boolean(participant.handRaised),
+    speaking: Boolean(participant.speaking)
+  };
+}
+
+function isLocalRealtimeParticipant(participant) {
+  return Boolean(participant && (
+    participant.id === state.participantId
+    || participant.sessionId === state.sessionId
+    || participant.livekitIdentity === state.localParticipantIdentity
+  ));
+}
+
+function removeParticipantEverywhere(participantId) {
+  state.participants?.remove(participantId);
+  state.waitingParticipants = state.waitingParticipants.filter((participant) => participant.id !== participantId);
+  if (state.activeParticipantId === participantId) state.activeParticipantId = getLocalParticipant()?.id || 'local';
+  if (state.screenShare.presenterId === participantId) {
+    state.screenShare = { ...state.screenShare, active: false, presenterId: null, track: null, stream: null, isLocalPresenter: false };
+  }
+}
+
+function handleRemoteParticipantRemoved() {
+  if (state.meetingEndHandled || state.leaveActionInFlight) return;
+  state.meetingEndHandled = true;
+  state.leaveActionInFlight = true;
+  page.dataset.meetingState = 'removed';
+  void cleanup({ finalizeRecording: true }).finally(() => {
+    modal.info({
+      eyebrow: 'Quyền tham gia đã kết thúc',
+      title: 'Bạn đã bị xóa khỏi cuộc họp',
+      message: 'Chủ trì đã ngắt kết nối bạn khỏi phòng.',
+      actions: [{ label: 'Về Dashboard', variant: 'primary', onClick: navigateToDashboard }]
+    });
+  });
+}
+
+function mergeRealtimeParticipant(value, eventType = 'UPDATE') {
+  const participant = normalizeRealtimeParticipant(value) || value;
+  if (!participant) return;
+  const local = isLocalRealtimeParticipant(participant);
+  if (local && ['removed', 'blocked', 'rejected'].includes(participant.status)) {
+    handleRemoteParticipantRemoved();
+    return;
+  }
+
+  const uiParticipant = toUiParticipant(participant, { local });
+  if (!uiParticipant) return;
+  const isWaiting = participant.status === 'waiting';
+  const isActive = ['joining', 'admitted'].includes(participant.status);
+  if (!isActive && !isWaiting || eventType === 'DELETE') {
+    removeParticipantEverywhere(uiParticipant.id);
+    render();
+    return;
+  }
+  if (isWaiting) {
+    removeParticipantEverywhere(uiParticipant.id);
+    state.waitingParticipants = [...state.waitingParticipants.filter((item) => item.id !== uiParticipant.id), uiParticipant];
+  } else {
+    state.waitingParticipants = state.waitingParticipants.filter((item) => item.id !== uiParticipant.id);
+    const existing = findParticipant(uiParticipant.id);
+    state.participants.upsert({ ...existing, ...uiParticipant, cameraTrack: existing?.cameraTrack, screenTrack: existing?.screenTrack });
+  }
+
+  if (!local && participant.screenSharing) {
+    state.screenShare = {
+      ...state.screenShare,
+      active: true,
+      presenterId: uiParticipant.id,
+      isLocalPresenter: false,
+      stream: null,
+      track: state.screenShare.presenterId === uiParticipant.id ? state.screenShare.track : null,
+      status: SCREEN_SHARE_STATES.LIVE
+    };
+  } else if (!local && state.screenShare.presenterId === uiParticipant.id && !participant.screenSharing) {
+    state.screenShare = {
+      ...state.screenShare,
+      active: false,
+      presenterId: null,
+      isLocalPresenter: false,
+      stream: null,
+      track: null,
+      status: SCREEN_SHARE_STATES.IDLE
+    };
+  }
+
+  if (local) {
+    state.participantId = uiParticipant.id;
+    if (uiParticipant.role && uiParticipant.role !== state.role) {
+      state.role = uiParticipant.role;
+      role = uiParticipant.role;
+    }
+    if (participant.cameraEnabled === false && state.localMedia.cameraEnabled) {
+      state.localMedia.cameraEnabled = false;
+      state.localMedia.cameraPreference = false;
+      void state.liveKit?.setCameraEnabled(false);
+    }
+    if (participant.microphoneEnabled === false && state.localMedia.microphoneEnabled) {
+      state.localMedia.microphoneEnabled = false;
+      state.localMedia.microphonePreference = false;
+      void state.liveKit?.setMicrophoneEnabled(false);
+    }
+    if (participant.shareScreenAllowed === false && state.screenShare.isLocalPresenter) {
+      stopScreenShare({ source: 'permission' });
+    }
+  }
+  render();
+}
+
+function replaceRealtimeParticipants(values) {
+  const previous = new Map(getParticipants().map((participant) => [participant.id, participant]));
+  const next = values
+    .map((value) => {
+      const local = isLocalRealtimeParticipant(value);
+      const participant = toUiParticipant(value, { local });
+      const old = participant ? previous.get(participant.id) : null;
+      return participant ? { ...old, ...participant, cameraTrack: old?.cameraTrack, screenTrack: old?.screenTrack } : null;
+    })
+    .filter(Boolean)
+    .filter((participant) => ['joining', 'admitted'].includes(participant.status || 'admitted'));
+  if (!next.some((participant) => participant.local)) {
+    const local = getLocalParticipant();
+    if (local) next.unshift(local);
+  }
+  state.participants = createParticipantStore(next);
+  state.waitingParticipants = values
+    .filter((value) => value.status === 'waiting')
+    .map((value) => toUiParticipant(value, { local: isLocalRealtimeParticipant(value) }))
+    .filter(Boolean);
+  const remotePresenter = values
+    .filter((value) => value.status === 'admitted' && value.screenSharing && !isLocalRealtimeParticipant(value))
+    .map((value) => toUiParticipant(value))
+    .find(Boolean);
+  if (remotePresenter) {
+    state.screenShare = {
+      ...state.screenShare,
+      active: true,
+      presenterId: remotePresenter.id,
+      isLocalPresenter: false,
+      stream: null,
+      track: state.screenShare.presenterId === remotePresenter.id ? state.screenShare.track : null,
+      status: SCREEN_SHARE_STATES.LIVE
+    };
+  } else if (!state.screenShare.isLocalPresenter && state.screenShare.active) {
+    state.screenShare = {
+      ...state.screenShare,
+      active: false,
+      presenterId: null,
+      stream: null,
+      track: null,
+      status: SCREEN_SHARE_STATES.IDLE
+    };
+  }
+  if (!next.some((participant) => participant.id === state.activeParticipantId)) state.activeParticipantId = next[0]?.id || 'local';
+  render();
+}
+
+function findParticipantByLiveKitIdentity(identity) {
+  return getParticipants().find((participant) => participant.livekitIdentity === identity)
+    || state.waitingParticipants.find((participant) => participant.livekitIdentity === identity);
+}
+
+function handleLiveKitParticipants(values) {
+  if (!values?.length) return;
+  values.forEach((value) => {
+    if (value.local) {
+      state.participantId = value.id || state.participantId;
+      state.localParticipantIdentity = value.livekitIdentity || state.localParticipantIdentity;
+    }
+  });
+  const snapshots = values.map((value) => ({
+    ...value,
+    id: value.id || value.livekitIdentity,
+    status: 'admitted'
+  }));
+  replaceRealtimeParticipants(snapshots);
+}
+
+function handleLiveKitParticipant(value) {
+  if (!value) return;
+  if (value.disconnected) {
+    const existing = findParticipantByLiveKitIdentity(value.livekitIdentity) || getParticipants().find((item) => item.id === value.id);
+    if (existing) {
+      removeParticipantEverywhere(existing.id);
+      render();
+    }
+    return;
+  }
+  const existing = findParticipantByLiveKitIdentity(value.livekitIdentity);
+  mergeRealtimeParticipant({ ...existing, ...value, id: value.id || existing?.id || value.livekitIdentity, status: 'admitted' });
+}
+
+function handleLiveKitTrack({ type, track, participant, source }) {
+  const remote = findParticipantByLiveKitIdentity(participant?.identity);
+  let metadata = {};
+  try { metadata = JSON.parse(participant?.metadata || '{}'); } catch { metadata = {}; }
+  const participantId = remote?.id || metadata.participantId || participant?.identity;
+  if (!participantId) return;
+  if (!remote && !getParticipants().some((item) => item.id === participantId)) {
+    state.participants.upsert(toUiParticipant({
+      id: participantId,
+      userId: metadata.userId,
+      livekitIdentity: participant.identity,
+      name: participant.name,
+      role: metadata.role,
+      status: 'admitted',
+      cameraEnabled: false,
+      microphoneEnabled: false,
+      shareScreenAllowed: metadata.shareScreenAllowed !== false
+    }));
+  }
+  if (source === 'camera') {
+    state.participants.update(participantId, { cameraEnabled: true, cameraTrack: track });
+  } else if (source === 'screen_share') {
+    state.screenShare = {
+      ...state.screenShare,
+      active: true,
+      presenterId: participantId,
+      isLocalPresenter: false,
+      stream: null,
+      track,
+      status: SCREEN_SHARE_STATES.LIVE
+    };
+  }
+  render();
+}
+
+function handleLiveKitTrackRemoved({ track, participant, source }) {
+  const remote = findParticipantByLiveKitIdentity(participant?.identity);
+  if (source === 'camera' && remote) state.participants.update(remote.id, { cameraEnabled: false, cameraTrack: null });
+  if (source === 'screen_share' && state.screenShare.presenterId === remote?.id) {
+    state.screenShare = { ...state.screenShare, active: false, presenterId: null, track: null, stream: null, isLocalPresenter: false };
+  }
+  track?.detach?.();
+  render();
+}
+
+function handleLiveKitData(data, participant) {
+  if (!data || typeof data !== 'object') return;
+  if (data.meetingId && data.meetingId !== state.meetingId) return;
+  const sender = participant?.name || 'Thành viên';
+  if (data.type === 'reaction' && ALLOWED_REACTIONS.has(data.value)) {
+    showToast(`${sender} ${data.value}`);
+  }
+  if (data.type === 'hand') {
+    const target = findParticipantByLiveKitIdentity(participant?.identity);
+    if (target) state.participants.update(target.id, { handRaised: Boolean(data.value) });
+    render();
+  }
+}
+
+function handleMeetingRealtimeMessage(message) {
+  const normalized = normalizeRealtimeMessage(message);
+  if (!normalized || state.messages.some((item) => item.id && item.id === normalized.id)) return;
+  state.messages.push(normalized);
+  if (state.panel !== 'chat') state.unreadCount += 1;
+  renderChat();
+  render();
+}
+
+function handleMeetingRealtimeUpdate(meeting) {
+  if (!meeting) return;
+  if (meeting.status === MEETING_STATUSES.ENDING || meeting.status === MEETING_STATUSES.ENDED) {
+    void handleRemoteMeetingEnded();
+    return;
+  }
+  if (meeting.title) state.meetingTitle = meeting.title;
+  if (meeting.startedAt) state.startedAt = Date.parse(meeting.startedAt) || Number(meeting.startedAt) || state.startedAt;
+  setText('[data-meeting-title]', state.meetingTitle);
+}
+
+function getRealtimeErrorMessage(code) {
+  if (code === 'ROOM_FULL') return `Cuộc họp đã đủ ${MAX_PARTICIPANTS} người tham gia.`;
+  if (code === 'MEETING_ENDED') return 'Cuộc họp đã kết thúc.';
+  if (code === 'MEETING_NOT_STARTED') return 'Chủ phòng chưa bắt đầu cuộc họp.';
+  if (code === 'LIVEKIT_NOT_CONFIGURED') return 'Cuộc họp chưa được cấu hình kết nối realtime.';
+  if (code === 'AUDIO_PLAYBACK_BLOCKED') return 'Chạm để bật âm thanh cuộc họp.';
+  return 'Không thể kết nối cuộc họp.';
+}
+
+async function initializeRealtimeMeeting() {
+  if (isDemoMode) return { success: true };
+  state.meetingId = state.meetingId || meetingContext.meeting?.id || getStoredJoinedMeeting()?.id || '';
+  if (!state.meetingId) return { success: false, code: 'MEETING_NOT_FOUND' };
+
+  const tokenResult = await requestLiveKitToken(state.roomCode, state.sessionId);
+  if (!tokenResult.success) return tokenResult;
+  state.meetingId = tokenResult.meetingId;
+  state.participantId = tokenResult.participantId;
+  state.localParticipantIdentity = tokenResult.livekitIdentity || '';
+  state.liveKit = createLiveKitRoomController({
+    onParticipants: handleLiveKitParticipants,
+    onParticipant: handleLiveKitParticipant,
+    onTrack: handleLiveKitTrack,
+    onTrackRemoved: handleLiveKitTrackRemoved,
+    onData: handleLiveKitData,
+    onSpeakers: (identities) => {
+      getParticipants().forEach((participant) => state.participants.update(participant.id, {
+        speaking: identities.includes(participant.livekitIdentity)
+      }));
+      render();
+    },
+    onConnection: (connectionState) => {
+      state.liveKitConnected = connectionState === 'CONNECTED';
+      if (connectionState === 'RECONNECTING') {
+        const indicator = document.querySelector('[data-connection-indicator]');
+        if (indicator) indicator.hidden = false;
+        setConnection('reconnecting', 'Đang kết nối lại…');
+      } else if (connectionState === 'CONNECTED') {
+        const indicator = document.querySelector('[data-connection-indicator]');
+        if (indicator) indicator.hidden = true;
+      }
+    },
+    onDisconnected: (reason) => {
+      const reasonValue = String(reason || '').toLowerCase();
+      if (reasonValue.includes('removed')) handleRemoteParticipantRemoved();
+      else if (reasonValue.includes('deleted') || reasonValue.includes('room')) void handleRemoteMeetingEnded();
+      else showToast('Không thể kết nối cuộc họp.');
+    },
+    onError: ({ code }) => {
+      if (code === 'AUDIO_PLAYBACK_BLOCKED') {
+        showToast(getRealtimeErrorMessage(code));
+        document.addEventListener('pointerdown', () => { void state.liveKit?.startAudio?.(); }, { once: true, passive: true });
+      }
+    }
+  });
+
+  state.meetingRealtime = createMeetingRealtimeController({
+    meetingId: state.meetingId,
+    sessionId: state.sessionId,
+    onParticipants: replaceRealtimeParticipants,
+    onParticipant: mergeRealtimeParticipant,
+    onMessage: handleMeetingRealtimeMessage,
+    onMeeting: handleMeetingRealtimeUpdate,
+    onConnection: (status) => {
+      if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') showToast('Không thể kết nối đồng bộ cuộc họp.');
+    },
+    onError: ({ code }) => {
+      if (!state.isCleaningUp) showToast(getRealtimeErrorMessage(code));
+    }
+  });
+  const realtimeResult = await state.meetingRealtime.connect();
+  if (!realtimeResult.success) return realtimeResult;
+  const liveKitResult = await state.liveKit.connect({ token: tokenResult.token, livekitUrl: tokenResult.livekitUrl });
+  if (!liveKitResult.success) return liveKitResult;
+  state.liveKitConnected = true;
+  await publishLocalMediaToLiveKit();
+  return { success: true };
+}
+
+async function publishLocalMediaToLiveKit() {
+  if (!state.liveKit) return;
+  if (state.localMedia.cameraEnabled && getLiveCameraTrack()) await state.liveKit.publishCamera(getLiveCameraTrack());
+  if (state.localMedia.microphoneEnabled && getLiveMicrophoneTrack()) await state.liveKit.publishMicrophone(getLiveMicrophoneTrack());
+  await state.meetingRealtime?.setMediaState({
+    cameraEnabled: state.localMedia.cameraEnabled,
+    microphoneEnabled: state.localMedia.microphoneEnabled
+  });
 }
 
 async function ensureScreenSharePlayback() {
@@ -2024,6 +2579,12 @@ function cleanup({ finalizeRecording = true } = {}) {
   state.speakerTimer = 0;
   state.reconnectTimer = 0;
   state.toastTimer = 0;
+  try { await state.meetingRealtime?.leave?.(); } catch { /* Membership cleanup is best effort. */ }
+  try { await state.liveKit?.disconnect?.({ stopTracks: false }); } catch { /* LiveKit cleanup is best effort. */ }
+  state.meetingRealtime?.close?.();
+  state.meetingRealtime = null;
+  state.liveKit?.close?.();
+  state.liveKit = null;
   try { state.unsubscribeMeetingEvents?.(); } catch { /* Runtime cleanup is best effort. */ }
   state.unsubscribeMeetingEvents = null;
   try { state.unsubscribeScreenShare?.(); } catch { /* Runtime cleanup is best effort. */ }
@@ -2404,6 +2965,17 @@ async function initialize() {
   role = meetingContext.role || PARTICIPANT_ROLES.MEMBER;
   state.role = role;
   state.displayName = sessionResult.user.displayName;
+  state.meetingId = meetingContext.meeting?.id || getStoredJoinedMeeting()?.id || state.meetingId;
+  try {
+    const storedParticipant = JSON.parse(readSession('flashMeeting.joinedParticipant') || 'null');
+    if (storedParticipant?.id) state.participantId = storedParticipant.id;
+    if (storedParticipant?.role) {
+      state.role = storedParticipant.role;
+      role = storedParticipant.role;
+    }
+  } catch {
+    // The realtime token remains the source of truth for participant identity.
+  }
   state.hostName = meetingContext.meeting?.hostName || 'Chủ phòng';
   state.participants = createParticipants();
   state.waitingParticipants = createWaitingParticipants();
@@ -2423,6 +2995,18 @@ async function initialize() {
   render();
   updateDuration();
   state.timer = window.setInterval(updateDuration, 1000);
+  const realtimeResult = await initializeRealtimeMeeting();
+  if (!realtimeResult.success) {
+    page.dataset.meetingState = 'error';
+    showToast(getRealtimeErrorMessage(realtimeResult.code));
+    modal.error({
+      title: 'Không thể kết nối cuộc họp',
+      message: getRealtimeErrorMessage(realtimeResult.code),
+      retryText: 'Thử lại',
+      onRetry: () => window.location.reload()
+    });
+    return;
+  }
   startConnectionMock();
   startActiveSpeakerMock();
   if (isRemoteShareScenario()) {

@@ -1,6 +1,7 @@
 import { getSession, MOCK_USER_ID } from './auth-service.js';
 import { configState } from './config.js';
 import { isLikelyRoomCode, normalizeRoomCode } from './utils.js';
+import { getMeetingSessionId, subscribeMeetingParticipants } from './meeting-realtime.js';
 
 export const MAX_MEETING_PARTICIPANTS = 50;
 export const WAITING_ROOM_DEFAULT_ENABLED = false;
@@ -124,6 +125,13 @@ function mapMeetingRpcError(error, fallbackCode) {
   const message = String(error?.message || '').toUpperCase();
   if (message.includes('AUTH_REQUIRED') || String(error?.code || '') === '42501') return 'AUTH_REQUIRED';
   if (message.includes('MEETING_NOT_FOUND')) return 'MEETING_NOT_FOUND';
+  if (message.includes('MEETING_ENDED')) return 'MEETING_ENDED';
+  if (message.includes('MEETING_CANCELLED')) return 'MEETING_CANCELLED';
+  if (message.includes('MEETING_LOCKED')) return 'MEETING_LOCKED';
+  if (message.includes('MEETING_NOT_STARTED')) return 'MEETING_NOT_STARTED';
+  if (message.includes('ROOM_FULL')) return 'ROOM_FULL';
+  if (message.includes('USER_BLOCKED')) return 'USER_BLOCKED';
+  if (message.includes('WAITING_ROOM')) return 'WAITING_ROOM_REQUIRED';
   if (message.includes('PERMISSION_DENIED')) return 'PERMISSION_DENIED';
   if (message.includes('INVALID_STATE')) return 'INVALID_STATE';
   if (isRemoteNetworkError(error)) return 'NETWORK_ERROR';
@@ -316,10 +324,9 @@ export async function createMeeting(input) {
   const authenticatedUser = getAuthenticatedUser();
   if (authenticatedUser && shouldUseRemoteBackend()) {
     const remote = await createRemoteMeeting(validation.input, authenticatedUser);
-    if (!remote.backendMissing) {
-      if (remote.errorCode) return { success: false, code: remote.errorCode };
-      return { success: true, meeting: remote.meeting, participant: remote.participant };
-    }
+    if (remote.backendMissing) return { success: false, code: CREATE_MEETING_ERROR_CODES.SERVICE_UNAVAILABLE };
+    if (remote.errorCode) return { success: false, code: remote.errorCode };
+    return { success: true, meeting: remote.meeting, participant: remote.participant };
   }
 
   // SECURITY: generate and validate the room code again in trusted server logic later.
@@ -375,10 +382,9 @@ export async function createInstantMeeting(currentUser = null) {
       maxParticipants: MAX_MEETING_PARTICIPANTS,
       waitingRoomEnabled: WAITING_ROOM_DEFAULT_ENABLED
     }, user);
-    if (!remote.backendMissing) {
-      if (remote.errorCode) return { success: false, code: remote.errorCode };
-      return { success: true, meeting: remote.meeting, participant: { ...remote.participant, status: 'pending' } };
-    }
+    if (remote.backendMissing) return { success: false, code: CREATE_MEETING_ERROR_CODES.SERVICE_UNAVAILABLE };
+    if (remote.errorCode) return { success: false, code: remote.errorCode };
+    return { success: true, meeting: remote.meeting, participant: { ...remote.participant, status: 'pending' } };
   }
 
   const now = Date.now();
@@ -580,6 +586,45 @@ async function getRemoteMeeting(roomCode) {
       : { usable: false, error: result.error };
   }
   return getRemoteMeetingResult(result.data);
+}
+
+async function joinRemoteMeeting(roomCode, displayName) {
+  const result = await callRemoteRpc('flash_meeting_join_meeting', {
+    p_room_code: roomCode,
+    p_display_name: String(displayName || 'Gmail user').trim().slice(0, 50),
+    p_session_id: getMeetingSessionId()
+  });
+  if (!result.available || isRemoteBackendMissing(result.error)) return { backendMissing: true };
+  if (result.error) {
+    return { errorCode: mapMeetingRpcError(result.error, JOIN_MEETING_ERROR_CODES.JOIN_FAILED), error: result.error };
+  }
+  let payload = result.data;
+  if (typeof payload === 'string') {
+    try { payload = JSON.parse(payload); } catch { return { errorCode: JOIN_MEETING_ERROR_CODES.JOIN_FAILED }; }
+  }
+  const meeting = normalizeRemoteMeeting(payload?.meeting);
+  if (!meeting || !payload?.participant) return { errorCode: JOIN_MEETING_ERROR_CODES.JOIN_FAILED };
+  const participant = {
+    ...payload.participant,
+    userId: payload.participant.userId || payload.participant.user_id,
+    displayName: payload.participant.displayName || payload.participant.display_name,
+    role: payload.participant.role || PARTICIPANT_ROLES.MEMBER,
+    status: payload.participant.status || 'admitted'
+  };
+  const participantContext = {
+    ...getCurrentParticipantContext(roomCode, meeting),
+    meeting,
+    participant,
+    role: participant.role,
+    isHost: participant.role === PARTICIPANT_ROLES.HOST,
+    isCoHost: participant.role === PARTICIPANT_ROLES.CO_HOST,
+    isMember: participant.role === PARTICIPANT_ROLES.MEMBER,
+    requiresWaitingRoom: payload.destination === ADMISSION_DESTINATIONS.WAITING_ROOM
+  };
+  return {
+    result: buildParticipantResult(meeting, participantContext, participant,
+      payload.destination || ADMISSION_DESTINATIONS.MEETING)
+  };
 }
 
 async function createRemoteMeeting(input, user) {
@@ -790,6 +835,7 @@ export async function listActiveMeetings(currentUser = null) {
           displayTime: new Date(meeting.startedAt).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })
         }));
     }
+    return [];
   }
 
   return listStoredMeetings()
@@ -822,6 +868,7 @@ export async function listMeetingHistory(currentUser = null, limit = DEFAULT_HIS
         ))
         .slice(0, safeLimit);
     }
+    return [];
   }
 
   return listStoredMeetings()
@@ -870,6 +917,7 @@ export async function startMeeting({ roomCode } = {}) {
       publishMeetingEvent('MEETING_STARTED', activeMeeting);
       return result;
     }
+    return { success: false, code: START_MEETING_ERROR_CODES.START_MEETING_FAILED };
   }
 
   const meeting = getJoinMeeting(normalizedRoomCode);
@@ -953,6 +1001,7 @@ export async function endMeeting({ roomCode } = {}) {
         participantContext: { ...participantContext, meeting: endedMeeting }
       };
     }
+    return { success: false, code: END_MEETING_ERROR_CODES.END_MEETING_FAILED };
   }
 
   const meeting = getJoinMeeting(normalizedRoomCode);
@@ -1072,14 +1121,70 @@ export async function getWaitingRoom(input) {
     } else if (remote.error) {
       const mappedCode = mapMeetingRpcError(remote.error, JOIN_MEETING_ERROR_CODES.JOIN_FAILED);
       return { success: false, code: JOIN_MEETING_ERROR_CODES[mappedCode] || mappedCode };
+    } else {
+      return { success: false, code: JOIN_MEETING_ERROR_CODES.SERVICE_UNAVAILABLE };
     }
   }
   meeting ||= getJoinMeeting(roomCode);
   if (!meeting) return { success: false, code: JOIN_MEETING_ERROR_CODES.MEETING_NOT_FOUND };
 
   const participantContext = getCurrentParticipantContext(roomCode, meeting);
-  // SECURITY: Host/Co-host bypass is based on mock frontend state in this phase.
-  // Production role/admission must be verified by trusted backend logic.
+  if (shouldUseRemoteBackend()) {
+    const remoteState = await callRemoteRpc('flash_meeting_get_my_participant', {
+      p_room_code: roomCode,
+      p_session_id: getMeetingSessionId()
+    });
+    if (!remoteState.available) return { success: false, code: JOIN_MEETING_ERROR_CODES.SERVICE_UNAVAILABLE };
+    if (remoteState.error) {
+      const mappedCode = mapMeetingRpcError(remoteState.error, JOIN_MEETING_ERROR_CODES.JOIN_FAILED);
+      return { success: false, code: JOIN_MEETING_ERROR_CODES[mappedCode] || mappedCode };
+    }
+    let payload = remoteState.data;
+    if (typeof payload === 'string') {
+      try { payload = JSON.parse(payload); } catch { return { success: false, code: JOIN_MEETING_ERROR_CODES.JOIN_FAILED }; }
+    }
+    const remoteParticipant = payload?.participant;
+    if (remoteParticipant && remoteParticipant.status !== 'left') {
+      const nextContext = {
+        ...participantContext,
+        meeting,
+        participant: remoteParticipant,
+        role: remoteParticipant.role,
+        isHost: remoteParticipant.role === PARTICIPANT_ROLES.HOST,
+        isCoHost: remoteParticipant.role === PARTICIPANT_ROLES.CO_HOST,
+        isMember: remoteParticipant.role === PARTICIPANT_ROLES.MEMBER
+      };
+      if (nextContext.isHost || nextContext.isCoHost) {
+        return { success: true, meeting, participant: remoteParticipant, participantContext: nextContext, destination: ADMISSION_DESTINATIONS.MEETING, request: null };
+      }
+      const destination = payload.destination || ADMISSION_DESTINATIONS.WAITING_ROOM;
+      return {
+        success: true,
+        meeting,
+        request: { roomCode, meetingTitle: meeting.title, hostName: meeting.hostName || '', displayName: remoteParticipant.displayName, status: remoteParticipant.status },
+        participant: remoteParticipant,
+        participantContext: { ...nextContext, requiresWaitingRoom: destination === ADMISSION_DESTINATIONS.WAITING_ROOM },
+        destination
+      };
+    }
+    const remoteJoin = await joinRemoteMeeting(roomCode, input?.displayName);
+    if (remoteJoin.backendMissing) return { success: false, code: JOIN_MEETING_ERROR_CODES.SERVICE_UNAVAILABLE };
+    if (remoteJoin.errorCode) return { success: false, code: JOIN_MEETING_ERROR_CODES[remoteJoin.errorCode] || remoteJoin.errorCode };
+    if (remoteJoin.result?.destination === ADMISSION_DESTINATIONS.MEETING) return { ...remoteJoin.result, request: null };
+    if (remoteJoin.result) {
+      return {
+        ...remoteJoin.result,
+        request: {
+          roomCode,
+          meetingTitle: remoteJoin.result.meeting.title,
+          hostName: remoteJoin.result.meeting.hostName || '',
+          displayName: remoteJoin.result.participant.displayName,
+          status: remoteJoin.result.participant.status
+        }
+      };
+    }
+  }
+
   if (participantContext.isHost || participantContext.isCoHost) {
     return {
       success: true,
@@ -1108,6 +1213,40 @@ export async function getWaitingRoom(input) {
 }
 
 export function watchWaitingRequest({ roomCode, status, onChange, onError } = {}) {
+  if (shouldUseRemoteBackend()) {
+    let cancelled = false;
+    let unsubscribe = null;
+    (async () => {
+      const remote = await getRemoteMeeting(normalizeRoomCode(roomCode));
+      if (cancelled) return;
+      if (remote.error || !remote.meeting) {
+        onError?.({ code: mapMeetingRpcError(remote.error, JOIN_MEETING_ERROR_CODES.NETWORK_ERROR) });
+        return;
+      }
+      unsubscribe = subscribeMeetingParticipants({
+        meetingId: remote.meeting.id,
+        onChange: (participant) => {
+          if (cancelled || participant?.userId !== getCurrentUser().id || participant.sessionId !== getMeetingSessionId()) return;
+          const nextStatus = participant.status === 'admitted'
+            ? WAITING_REQUEST_STATUSES.APPROVED
+            : participant.status === 'rejected'
+              ? WAITING_REQUEST_STATUSES.REJECTED
+              : participant.status === 'removed'
+                ? WAITING_REQUEST_STATUSES.REMOVED
+                : participant.status === 'left'
+                  ? WAITING_REQUEST_STATUSES.MEETING_ENDED
+                  : WAITING_REQUEST_STATUSES.WAITING;
+          onChange?.({ status: nextStatus, participant });
+        },
+        onError
+      });
+    })().catch((error) => onError?.({ code: mapMeetingRpcError(error, JOIN_MEETING_ERROR_CODES.NETWORK_ERROR) }));
+    return () => {
+      cancelled = true;
+      unsubscribe?.();
+    };
+  }
+
   const participantContext = getCurrentParticipantContext(roomCode);
   if (participantContext.isHost || participantContext.isCoHost) return () => {};
   const scenario = getMockScenario();
@@ -1142,10 +1281,62 @@ export function updateWaitingRequestStatus({ roomCode, status } = {}) {
   return true;
 }
 
-export function withdrawWaitingRequest({ roomCode } = {}) {
+export async function withdrawWaitingRequest({ roomCode } = {}) {
+  if (shouldUseRemoteBackend()) {
+    const remote = await getRemoteMeeting(normalizeRoomCode(roomCode));
+    if (remote.backendMissing || !remote.meeting) return { success: false, code: JOIN_MEETING_ERROR_CODES.SERVICE_UNAVAILABLE };
+    const result = await leaveRemoteMeeting(remote.meeting.id, getMeetingSessionId());
+    return result.success ? { success: true, status: 'withdrawn' } : result;
+  }
   const request = readWaitingRequest();
   if (!request || request.roomCode === roomCode) removeWaitingRequest();
   return { success: true, status: 'withdrawn' };
+}
+
+export async function leaveMeetingSession({ meetingId, sessionId = getMeetingSessionId() } = {}) {
+  if (!shouldUseRemoteBackend()) return { success: true };
+  const result = await callRemoteRpc('flash_meeting_leave_meeting', {
+    p_meeting_id: meetingId,
+    p_session_id: sessionId
+  });
+  if (!result.available) return { success: false, code: JOIN_MEETING_ERROR_CODES.SERVICE_UNAVAILABLE };
+  if (result.error) return { success: false, code: mapMeetingRpcError(result.error, JOIN_MEETING_ERROR_CODES.NETWORK_ERROR) };
+  return { success: true, participant: result.data };
+}
+
+export async function setMeetingMediaState({ meetingId, cameraEnabled, microphoneEnabled, handRaised = null, sessionId = getMeetingSessionId() } = {}) {
+  if (!shouldUseRemoteBackend()) return { success: true };
+  const result = await callRemoteRpc('flash_meeting_set_media_state', {
+    p_meeting_id: meetingId,
+    p_session_id: sessionId,
+    p_camera_enabled: Boolean(cameraEnabled),
+    p_microphone_enabled: Boolean(microphoneEnabled),
+    p_hand_raised: handRaised
+  });
+  if (!result.available) return { success: false, code: JOIN_MEETING_ERROR_CODES.SERVICE_UNAVAILABLE };
+  if (result.error) return { success: false, code: mapMeetingRpcError(result.error, JOIN_MEETING_ERROR_CODES.NETWORK_ERROR) };
+  return { success: true, participant: result.data };
+}
+
+export async function moderateMeetingParticipant({ meetingId, participantId, action, value = null } = {}) {
+  if (!shouldUseRemoteBackend()) return { success: false, code: 'FOUNDATION_NOT_READY' };
+  const serverAction = {
+    muteParticipant: 'mute',
+    stopParticipantCamera: 'stop_camera',
+    promoteToCoHost: 'promote',
+    demoteCoHost: 'demote',
+    setParticipantSharePermission: 'set_share_permission',
+    removeParticipant: 'remove'
+  }[action] || action;
+  const result = await callRemoteRpc('flash_meeting_moderate_participant', {
+    p_meeting_id: meetingId,
+    p_participant_id: participantId,
+    p_action: serverAction,
+    p_value: value
+  });
+  if (!result.available) return { success: false, code: 'SERVICE_UNAVAILABLE' };
+  if (result.error) return { success: false, code: mapMeetingRpcError(result.error, 'MODERATION_FAILED') };
+  return { success: true, participant: result.data };
 }
 
 export async function resolveMeetingForJoin(input) {
@@ -1191,12 +1382,22 @@ export async function resolveMeetingForJoin(input) {
 
   let meeting = null;
   if (shouldUseRemoteBackend()) {
+    if (isJoinAttempt) {
+      const remoteJoin = await joinRemoteMeeting(roomCode, input?.displayName);
+      if (remoteJoin.backendMissing) return { success: false, code: JOIN_MEETING_ERROR_CODES.SERVICE_UNAVAILABLE };
+      if (remoteJoin.errorCode) {
+        return { success: false, code: JOIN_MEETING_ERROR_CODES[remoteJoin.errorCode] || remoteJoin.errorCode };
+      }
+      return remoteJoin.result;
+    }
     const remote = await getRemoteMeeting(roomCode);
     if (remote.usable) {
       meeting = remote.meeting;
     } else if (remote.error) {
       const mappedCode = mapMeetingRpcError(remote.error, JOIN_MEETING_ERROR_CODES.JOIN_FAILED);
       return { success: false, code: JOIN_MEETING_ERROR_CODES[mappedCode] || mappedCode };
+    } else {
+      return { success: false, code: JOIN_MEETING_ERROR_CODES.SERVICE_UNAVAILABLE };
     }
   }
   meeting ||= getJoinMeeting(roomCode);
@@ -1256,5 +1457,8 @@ export const meetingService = Object.freeze({
   getWaitingRoom,
   watchWaitingRequest,
   updateWaitingRequestStatus,
-  withdrawWaitingRequest
+  withdrawWaitingRequest,
+  leaveMeetingSession,
+  setMeetingMediaState,
+  moderateMeetingParticipant
 });

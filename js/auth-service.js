@@ -182,6 +182,7 @@ function clearAppSession({ preserveNextRoute = false, clearAuthMetadata = true }
     'flashMeeting.displayName',
     'flashMeeting.roomCode',
     'flashMeeting.joinedMeeting',
+    'flashMeeting.joinedParticipant',
     'flashMeeting.createdMeeting',
     'flashMeeting.waitingRequest',
     'flashMeeting.leaveResult',

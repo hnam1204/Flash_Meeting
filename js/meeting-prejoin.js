@@ -644,6 +644,7 @@ async function handleSubmit(event) {
   sessionStorage.setItem('flashMeeting.roomCode', result.meeting.roomCode);
   sessionStorage.setItem('flashMeeting.displayName', result.participant.displayName);
   sessionStorage.setItem('flashMeeting.joinedMeeting', JSON.stringify(result.meeting));
+  sessionStorage.setItem('flashMeeting.joinedParticipant', JSON.stringify(result.participant));
   persistMediaPreferences();
   cleanupMedia();
 

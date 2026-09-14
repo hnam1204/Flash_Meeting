@@ -308,6 +308,7 @@ async function handleLeave() {
   try {
     sessionStorage.removeItem('flashMeeting.roomCode');
     sessionStorage.removeItem('flashMeeting.joinedMeeting');
+    sessionStorage.removeItem('flashMeeting.joinedParticipant');
   } catch {
     // Session storage is optional in mock mode.
   }
@@ -390,7 +391,7 @@ window.addEventListener('offline', handleOffline);
 window.addEventListener('online', handleOnline);
 window.addEventListener('pagehide', clearWatcher, { once: true });
 
-// TODO Realtime Phase: replace the mock waiting-request subscription with Supabase Realtime after backend authorization is implemented.
+// Production waiting requests use secure membership updates; mock scenarios keep the local watcher.
 registerAuthExpiryCleanup(() => {
   clearWatcher();
   clearJoinTimer();
