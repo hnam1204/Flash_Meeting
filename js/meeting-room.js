@@ -53,9 +53,9 @@ import {
 } from './meeting-realtime.js';
 import { modal } from './ui/modal-manager.js';
 import { createIcon, renderIcons, setIcon } from './ui/icons.js';
+import { createParticipantGridController } from './meeting-participant-grid.js';
 
 const MAX_PARTICIPANTS = MAX_MEETING_PARTICIPANTS;
-const FILMSTRIP_DEFAULT_SIZE = 6;
 const DEFAULT_DURATION_SECONDS = (24 * 60) + 17;
 const MEDIA_STATUS = Object.freeze({
   IDLE: 'IDLE',
@@ -113,8 +113,8 @@ const state = {
   participantMenuId: null,
   waitingParticipants: [],
   view: 'speaker',
+  userSelectedView: false,
   filmstripPage: 0,
-  filmstripSize: FILMSTRIP_DEFAULT_SIZE,
   activeParticipantId: 'local',
   messages: isDemoMode ? [
     { author: 'Minh Anh', content: 'Mọi người nghe rõ không?' },
@@ -140,6 +140,9 @@ const state = {
   sessionId: getMeetingSessionId(),
   participantId: '',
   liveKitConnected: false,
+  liveKitParticipantsHydrated: false,
+  initialLiveKitParticipantKeys: new Set(),
+  realtimeParticipantsHydrated: false,
   localParticipantIdentity: '',
   meetingEndHandled: false,
   recording: {
@@ -213,6 +216,26 @@ const inviteController = createMeetingInviteController({
   getParticipantCount: () => state.participants ? getParticipants().length : null
 });
 
+const participantGrid = createParticipantGridController({
+  gridElement: gridTiles,
+  filmstripElement: filmstrip,
+  paginationWrap: document.querySelector('.filmstrip-wrap'),
+  previousButton: document.querySelector('[data-filmstrip-prev]'),
+  nextButton: document.querySelector('[data-filmstrip-next]'),
+  pageIndicator: document.querySelector('[data-filmstrip-page]'),
+  summaryElement: document.querySelector('[data-filmstrip-summary]'),
+  getParticipants: () => state.participants ? getParticipants() : [],
+  getLocalStream: () => state.localMedia.cameraStream,
+  getLiveKit: () => state.liveKit,
+  getActiveParticipantId: () => state.activeParticipantId,
+  getPresenterId: () => state.screenShare.presenterId,
+  onSelectParticipant: (participantId) => {
+    if (!participantId) return;
+    state.activeParticipantId = participantId;
+    render();
+  }
+});
+
 function readSession(key) {
   try {
     return sessionStorage.getItem(key) ?? '';
@@ -280,6 +303,8 @@ function getStartedAt() {
 function getParticipantCount() {
   if (scenario === 'only-local') return 1;
   if (scenario === 'many-participants' || scenario === 'room-full' || scenario === 'full') return MAX_PARTICIPANTS;
+  const countMatch = scenario.match(/^(?:participants?|users?)[-_]?(\d+)$|^(\d+)[-_]?(?:participants?|users?)$/);
+  if (countMatch) return Math.max(1, Math.min(MAX_PARTICIPANTS, Number(countMatch[1] || countMatch[2])));
   return isDemoMode ? 24 : 1;
 }
 
@@ -454,101 +479,6 @@ function isMeetingTransitioning() {
   return ['leaving', 'ending', 'ended'].includes(page.dataset.meetingState);
 }
 
-function getFilmstripSize() {
-  if (window.innerWidth <= 680) return 3;
-  if (window.innerWidth <= 900) return 4;
-  if (window.innerWidth <= 1180) return 5;
-  return FILMSTRIP_DEFAULT_SIZE;
-}
-
-function createParticipantVisual(participant) {
-  const visual = document.createElement('div');
-  visual.className = 'participant-visual';
-  if (!participant.cameraEnabled) visual.classList.add('camera-off');
-  if (participant.local && participant.cameraEnabled && isCameraStreamHealthy()) {
-    const video = document.createElement('video');
-    video.className = 'participant-video';
-    video.autoplay = true;
-    video.muted = true;
-    video.playsInline = true;
-    video.setAttribute('aria-label', 'Camera của bạn');
-    video.srcObject = state.localMedia.cameraStream;
-    video.play().catch(() => {});
-    visual.append(video);
-    return visual;
-  }
-  if (!participant.local && participant.cameraEnabled && participant.cameraTrack && state.liveKit) {
-    const video = document.createElement('video');
-    video.className = 'participant-video';
-    video.autoplay = true;
-    video.muted = true;
-    video.playsInline = true;
-    video.setAttribute('aria-label', `Camera của ${participant.name}`);
-    state.liveKit.attachRemoteTrack(participant.livekitIdentity, 'camera', video);
-    visual.append(video);
-    return visual;
-  }
-  const avatar = document.createElement('span');
-  avatar.className = 'participant-avatar';
-  avatar.textContent = getInitials(participant.name);
-  visual.append(avatar);
-  return visual;
-}
-
-function createParticipantTile(participant, tileType = 'filmstrip') {
-  const tile = document.createElement(tileType === 'grid' ? 'article' : 'button');
-  tile.className = tileType === 'grid' ? 'grid-tile participant-tile' : 'participant-tile';
-  tile.type = tileType === 'grid' ? undefined : 'button';
-  tile.setAttribute('role', tileType === 'grid' ? 'listitem' : 'listitem');
-  tile.classList.toggle('is-local', participant.local);
-  tile.classList.toggle('is-speaking', participant.speaking);
-  tile.classList.toggle('is-active', participant.id === state.activeParticipantId);
-  tile.setAttribute('aria-label', `${participant.name}${participant.local ? ' (Bạn)' : ''}`);
-
-  if (participant.local) {
-    const localBadge = document.createElement('span');
-    localBadge.className = 'participant-local';
-    localBadge.textContent = 'Bạn';
-    tile.append(localBadge);
-  }
-  if (participant.handRaised) {
-    const hand = document.createElement('span');
-    hand.className = 'participant-hand';
-    hand.append(createIcon('hand'));
-    hand.setAttribute('aria-label', 'Đang giơ tay');
-    tile.append(hand);
-  }
-  if (state.screenShare.presenterId === participant.id) {
-    const presenter = document.createElement('span');
-    presenter.className = 'participant-hand participant-presenter';
-    presenter.append(createIcon('screen-share'));
-    presenter.setAttribute('aria-label', 'Đang trình bày');
-    tile.append(presenter);
-  }
-
-  tile.append(createParticipantVisual(participant));
-  const footer = document.createElement('span');
-  footer.className = 'participant-footer';
-  const name = document.createElement('span');
-  name.className = 'participant-name';
-  name.textContent = participant.local ? `${participant.name} (Bạn)` : participant.name;
-  const mediaState = document.createElement('span');
-  mediaState.className = `participant-state${participant.microphoneEnabled ? '' : ' is-off'}`;
-  mediaState.append(createIcon(participant.microphoneEnabled ? 'mic' : 'mic-off'));
-  mediaState.setAttribute('aria-label', participant.microphoneEnabled ? 'Micro đang bật' : 'Micro đang tắt');
-  footer.append(name, mediaState);
-  tile.append(footer);
-
-  if (tileType === 'filmstrip') {
-    tile.addEventListener('click', () => {
-      state.activeParticipantId = participant.id;
-      getParticipants().forEach((item) => state.participants.upsert({ ...item, speaking: item.id === participant.id }));
-      render();
-    });
-  }
-  return tile;
-}
-
 function renderActiveStage() {
   const active = findParticipant(state.activeParticipantId);
   const mediaElement = document.querySelector('[data-active-media]');
@@ -565,6 +495,7 @@ function renderActiveStage() {
   const showLocalVideo = Boolean(active.local && active.cameraEnabled && isCameraStreamHealthy() && localVideo);
   const showRemoteVideo = Boolean(!active.local && active.cameraEnabled && active.cameraTrack && active.livekitIdentity && state.liveKit && localVideo);
   mediaElement.classList.toggle('has-live-video', showLocalVideo || showRemoteVideo);
+  mediaElement.classList.toggle('is-remote-video', showRemoteVideo);
   if (localVideo) {
     localVideo.hidden = !showLocalVideo && !showRemoteVideo;
     localVideo.muted = true;
@@ -597,34 +528,19 @@ function renderActiveStage() {
 }
 
 function renderFilmstrip() {
-  state.filmstripSize = getFilmstripSize();
-  const participants = getParticipants();
-  const pageCount = Math.max(1, Math.ceil(participants.length / state.filmstripSize));
-  state.filmstripPage = Math.min(state.filmstripPage, pageCount - 1);
-  const start = state.filmstripPage * state.filmstripSize;
-  const visible = participants.slice(start, start + state.filmstripSize);
-  filmstrip.replaceChildren(...visible.map((participant) => createParticipantTile(participant)));
-  renderIcons(filmstrip);
-  const previous = document.querySelector('[data-filmstrip-prev]');
-  const next = document.querySelector('[data-filmstrip-next]');
-  const filmstripWrap = document.querySelector('.filmstrip-wrap');
-  const filmstripMeta = document.querySelector('.filmstrip-meta');
-  const isSinglePage = pageCount <= 1;
-  document.querySelector('.meeting-stage-region')?.classList.toggle('has-filmstrip', !isSinglePage);
-  filmstripWrap?.classList.toggle('is-single-page', isSinglePage);
-  if (filmstripMeta) filmstripMeta.hidden = isSinglePage;
-  if (previous) previous.hidden = isSinglePage;
-  if (next) next.hidden = isSinglePage;
-  previous.disabled = state.filmstripPage === 0;
-  next.disabled = state.filmstripPage >= pageCount - 1;
-  setText('[data-filmstrip-page]', `${state.filmstripPage + 1} / ${pageCount}`);
-  setText('[data-filmstrip-summary]', `Hiển thị ${start + 1}–${start + visible.length} / ${participants.length} thành viên`);
-}
-
-function renderGrid() {
-  const visible = getParticipants().slice(0, 9);
-  gridTiles.replaceChildren(...visible.map((participant) => createParticipantTile(participant, 'grid')));
-  renderIcons(gridTiles);
+  const mode = state.screenShare.active
+    ? 'presentation'
+    : state.view === 'grid' ? 'grid' : 'speaker';
+  const result = participantGrid.render({ mode });
+  state.filmstripPage = result.currentPage;
+  document.querySelector('.meeting-stage-region')?.classList.toggle(
+    'has-filmstrip',
+    mode !== 'grid' && result.participants.length > 1
+  );
+  document.querySelector('.filmstrip-wrap')?.classList.toggle(
+    'is-single-page',
+    mode !== 'grid' && result.participants.length <= 1
+  );
 }
 
 function createParticipantActionMenu(participant) {
@@ -1289,9 +1205,8 @@ function renderView() {
   setText('[data-share-label]', 'Chia sẻ');
   setText('[data-share-state]', 'Màn hình');
   renderShareSupport();
-  setText('[data-stage-heading]', speakerMode ? 'Người đang phát biểu' : 'Lưới thành viên');
+  setText('[data-stage-heading]', speakerMode ? 'Người đang phát biểu' : 'Người tham gia');
   setText('[data-stage-status]', speakerMode ? 'Chế độ người nói' : 'Chế độ lưới');
-  if (!speakerMode) renderGrid();
 }
 
 function renderPresentation() {
@@ -1353,7 +1268,7 @@ function renderPresentation() {
 }
 
 function render() {
-  state.liveKit?.detachAllTracks?.();
+  page.dataset.viewMode = state.view;
   renderActiveStage();
   renderFilmstrip();
   renderView();
@@ -1946,6 +1861,13 @@ async function handleStopPresentation() {
 
 function handleReaction(reaction) {
   if (!ALLOWED_REACTIONS.has(reaction)) return;
+  const local = getLocalParticipant();
+  if (local) {
+    state.participants.update(local.id, {
+      reaction,
+      reactionExpiresAt: Date.now() + 2_800
+    });
+  }
   void state.liveKit?.publishData({
     type: 'reaction',
     meetingId: state.meetingId,
@@ -1953,9 +1875,9 @@ function handleReaction(reaction) {
     value: reaction,
     sentAt: Date.now()
   });
-  showToast(`Bạn đã gửi ${reaction}`);
   document.querySelector('[data-reaction-popover]').hidden = true;
   document.querySelector('[data-reaction-toggle]').setAttribute('aria-expanded', 'false');
+  render();
 }
 
 function toggleRaiseHand() {
@@ -1974,6 +1896,7 @@ function toggleRaiseHand() {
 }
 
 function setView(view) {
+  state.userSelectedView = true;
   state.view = view;
   page.dataset.viewMode = view;
   closeMoreMenu();
@@ -2121,6 +2044,7 @@ function mergeRealtimeParticipant(value, eventType = 'UPDATE') {
   const participant = normalizeRealtimeParticipant(value) || value;
   if (!participant) return;
   const local = isLocalRealtimeParticipant(participant);
+  const existingBeforeChange = state.participants ? findParticipant(participant.id) : null;
   if (local && ['removed', 'blocked', 'rejected'].includes(participant.status)) {
     handleRemoteParticipantRemoved();
     return;
@@ -2131,6 +2055,11 @@ function mergeRealtimeParticipant(value, eventType = 'UPDATE') {
   const isWaiting = participant.status === 'waiting';
   const isActive = ['joining', 'admitted'].includes(participant.status);
   if (!isActive && !isWaiting || eventType === 'DELETE') {
+    if (existingBeforeChange && !local && state.realtimeParticipantsHydrated) {
+      showToast(['removed', 'blocked'].includes(participant.status)
+        ? `${existingBeforeChange.name} đã bị xóa khỏi cuộc họp`
+        : `${existingBeforeChange.name} đã rời cuộc họp`);
+    }
     removeParticipantEverywhere(uiParticipant.id);
     render();
     return;
@@ -2140,8 +2069,27 @@ function mergeRealtimeParticipant(value, eventType = 'UPDATE') {
     state.waitingParticipants = [...state.waitingParticipants.filter((item) => item.id !== uiParticipant.id), uiParticipant];
   } else {
     state.waitingParticipants = state.waitingParticipants.filter((item) => item.id !== uiParticipant.id);
-    const existing = findParticipant(uiParticipant.id);
-    state.participants.upsert({ ...existing, ...uiParticipant, cameraTrack: existing?.cameraTrack, screenTrack: existing?.screenTrack });
+    const existing = existingBeforeChange || findParticipant(uiParticipant.id);
+    state.participants.upsert({
+      ...existing,
+      ...uiParticipant,
+      role: participant.roleFromMetadata || ['INSERT', 'UPDATE'].includes(eventType)
+        ? participant.role
+        : existing?.role || uiParticipant.role,
+      cameraTrack: uiParticipant.cameraTrack || existing?.cameraTrack || null,
+      microphoneTrack: uiParticipant.microphoneTrack || existing?.microphoneTrack || null,
+      screenShareTrack: uiParticipant.screenShareTrack || existing?.screenShareTrack || null,
+      cameraPublication: uiParticipant.cameraPublication || existing?.cameraPublication || null,
+      microphonePublication: uiParticipant.microphonePublication || existing?.microphonePublication || null,
+      screenSharePublication: uiParticipant.screenSharePublication || existing?.screenSharePublication || null
+    });
+  }
+
+  if (eventType === 'connected' || eventType === 'INSERT') {
+    if (!local && state.realtimeParticipantsHydrated
+      && (eventType === 'INSERT' || state.liveKitParticipantsHydrated)) {
+      showToast(`${uiParticipant.name} đã tham gia cuộc họp`);
+    }
   }
 
   if (!local && participant.screenSharing) {
@@ -2196,7 +2144,17 @@ function replaceRealtimeParticipants(values) {
       const local = isLocalRealtimeParticipant(value);
       const participant = toUiParticipant(value, { local });
       const old = participant ? previous.get(participant.id) : null;
-      return participant ? { ...old, ...participant, cameraTrack: old?.cameraTrack, screenTrack: old?.screenTrack } : null;
+      return participant ? {
+        ...old,
+        ...participant,
+        role: participant.roleFromMetadata ? participant.role : old?.role || participant.role,
+        cameraTrack: participant.cameraTrack || old?.cameraTrack || null,
+        microphoneTrack: participant.microphoneTrack || old?.microphoneTrack || null,
+        screenShareTrack: participant.screenShareTrack || old?.screenShareTrack || null,
+        cameraPublication: participant.cameraPublication || old?.cameraPublication || null,
+        microphonePublication: participant.microphonePublication || old?.microphonePublication || null,
+        screenSharePublication: participant.screenSharePublication || old?.screenSharePublication || null
+      } : null;
     })
     .filter(Boolean)
     .filter((participant) => ['joining', 'admitted'].includes(participant.status || 'admitted'));
@@ -2204,7 +2162,13 @@ function replaceRealtimeParticipants(values) {
     const local = getLocalParticipant();
     if (local) next.unshift(local);
   }
-  state.participants = createParticipantStore(next);
+  const nextById = new Map(next.map((participant) => [participant.id, participant]));
+  const orderedNext = [
+    ...getParticipants().map((participant) => nextById.get(participant.id)).filter(Boolean),
+    ...next.filter((participant) => !getParticipants().some((current) => current.id === participant.id))
+  ];
+  state.participants = createParticipantStore(orderedNext);
+  state.realtimeParticipantsHydrated = true;
   state.waitingParticipants = values
     .filter((value) => value.status === 'waiting')
     .map((value) => toUiParticipant(value, { local: isLocalRealtimeParticipant(value) }))
@@ -2234,6 +2198,7 @@ function replaceRealtimeParticipants(values) {
     };
   }
   if (!next.some((participant) => participant.id === state.activeParticipantId)) state.activeParticipantId = next[0]?.id || 'local';
+  if (!state.userSelectedView) state.view = next.length > 1 ? 'grid' : 'speaker';
   render();
 }
 
@@ -2244,6 +2209,11 @@ function findParticipantByLiveKitIdentity(identity) {
 
 function handleLiveKitParticipants(values) {
   if (!values?.length) return;
+  if (!state.liveKitParticipantsHydrated) {
+    state.initialLiveKitParticipantKeys = new Set(
+      values.map((value) => String(value.id || value.livekitIdentity || '').trim())
+    );
+  }
   values.forEach((value) => {
     if (value.local) {
       state.participantId = value.id || state.participantId;
@@ -2255,6 +2225,7 @@ function handleLiveKitParticipants(values) {
     id: value.id || value.livekitIdentity,
     status: 'admitted'
   }));
+  state.liveKitParticipantsHydrated = true;
   replaceRealtimeParticipants(snapshots);
 }
 
@@ -2263,13 +2234,37 @@ function handleLiveKitParticipant(value) {
   if (value.disconnected) {
     const existing = findParticipantByLiveKitIdentity(value.livekitIdentity) || getParticipants().find((item) => item.id === value.id);
     if (existing) {
+      if (state.liveKitParticipantsHydrated && !existing.local && !state.meetingEndHandled) {
+        showToast(`${existing.name} đã rời cuộc họp`);
+      }
       removeParticipantEverywhere(existing.id);
       render();
     }
     return;
   }
   const existing = findParticipantByLiveKitIdentity(value.livekitIdentity);
-  mergeRealtimeParticipant({ ...existing, ...value, id: value.id || existing?.id || value.livekitIdentity, status: 'admitted' });
+  const liveKitKey = String(value.id || value.livekitIdentity || '').trim();
+  const isInitialParticipant = state.initialLiveKitParticipantKeys.has(liveKitKey);
+  state.initialLiveKitParticipantKeys.delete(liveKitKey);
+  mergeRealtimeParticipant({
+    ...existing,
+    ...value,
+    id: value.id || existing?.id || value.livekitIdentity,
+    status: 'admitted',
+    eventType: value.eventType || 'updated'
+  }, isInitialParticipant ? 'updated' : value.eventType || 'UPDATE');
+  const updatedParticipant = findParticipantByLiveKitIdentity(value.livekitIdentity)
+    || getParticipants().find((participant) => participant.id === value.id);
+  if (updatedParticipant && ['camera', 'microphone', 'screen_share'].includes(value.source)
+    && ['track-published', 'track-unpublished'].includes(value.eventType)) {
+    const changes = value.source === 'camera'
+      ? { cameraTrack: value.cameraTrack || null }
+      : value.source === 'microphone'
+        ? { microphoneTrack: value.microphoneTrack || null }
+        : { screenShareTrack: value.screenShareTrack || null };
+    state.participants.update(updatedParticipant.id, changes);
+    render();
+  }
 }
 
 function handleLiveKitTrack({ type, track, participant, source }) {
@@ -2292,7 +2287,12 @@ function handleLiveKitTrack({ type, track, participant, source }) {
     }));
   }
   if (source === 'camera') {
-    state.participants.update(participantId, { cameraEnabled: true, cameraTrack: track });
+    state.participants.update(participantId, {
+      cameraEnabled: true,
+      cameraTrack: track
+    });
+  } else if (source === 'microphone') {
+    state.participants.update(participantId, { microphoneEnabled: true, microphoneTrack: track });
   } else if (source === 'screen_share') {
     state.screenShare = {
       ...state.screenShare,
@@ -2303,6 +2303,11 @@ function handleLiveKitTrack({ type, track, participant, source }) {
       track,
       status: SCREEN_SHARE_STATES.LIVE
     };
+    state.participants.update(participantId, {
+      screenShareActive: true,
+      screenShareTrack: track,
+      screenSharing: true
+    });
   }
   render();
 }
@@ -2310,9 +2315,11 @@ function handleLiveKitTrack({ type, track, participant, source }) {
 function handleLiveKitTrackRemoved({ track, participant, source }) {
   const remote = findParticipantByLiveKitIdentity(participant?.identity);
   if (source === 'camera' && remote) state.participants.update(remote.id, { cameraEnabled: false, cameraTrack: null });
+  if (source === 'microphone' && remote) state.participants.update(remote.id, { microphoneEnabled: false, microphoneTrack: null });
   if (source === 'screen_share' && state.screenShare.presenterId === remote?.id) {
     state.screenShare = { ...state.screenShare, active: false, presenterId: null, track: null, stream: null, isLocalPresenter: false };
   }
+  if (source === 'screen_share' && remote) state.participants.update(remote.id, { screenShareActive: false, screenShareTrack: null, screenSharing: false });
   track?.detach?.();
   render();
 }
@@ -2320,9 +2327,15 @@ function handleLiveKitTrackRemoved({ track, participant, source }) {
 function handleLiveKitData(data, participant) {
   if (!data || typeof data !== 'object') return;
   if (data.meetingId && data.meetingId !== state.meetingId) return;
-  const sender = participant?.name || 'Thành viên';
   if (data.type === 'reaction' && ALLOWED_REACTIONS.has(data.value)) {
-    showToast(`${sender} ${data.value}`);
+    const target = findParticipantByLiveKitIdentity(participant?.identity);
+    if (target) {
+      state.participants.update(target.id, {
+        reaction: data.value,
+        reactionExpiresAt: Date.now() + 2_800
+      });
+      render();
+    }
   }
   if (data.type === 'hand') {
     const target = findParticipantByLiveKitIdentity(participant?.identity);
@@ -2380,6 +2393,8 @@ async function initializeRealtimeMeeting() {
       getParticipants().forEach((participant) => state.participants.update(participant.id, {
         speaking: identities.includes(participant.livekitIdentity)
       }));
+      const activeSpeaker = getParticipants().find((participant) => identities.includes(participant.livekitIdentity));
+      if (activeSpeaker) state.activeParticipantId = activeSpeaker.id;
       render();
     },
     onConnection: (connectionState) => {
@@ -2548,6 +2563,7 @@ function cleanup({ finalizeRecording = true } = {}) {
   try { state.unsubscribeScreenShare?.(); } catch { /* Runtime cleanup is best effort. */ }
   state.unsubscribeScreenShare = null;
   try { cleanupScreenShare(); } catch { /* Runtime cleanup is best effort. */ }
+  participantGrid.destroy();
   state.localMedia.cameraStream?.getTracks?.().forEach((track) => { track.onended = null; });
   state.localMedia.microphoneStream?.getTracks?.().forEach((track) => { track.onended = null; });
   state.localMedia.cameraStream = null;
@@ -2880,8 +2896,14 @@ function bindEvents() {
   document.addEventListener('click', (event) => {
     if (!event.target.closest('.participant-menu') && !event.target.closest('[data-participant-menu]')) closeParticipantMenu();
   });
-  document.querySelector('[data-filmstrip-prev]')?.addEventListener('click', () => { state.filmstripPage -= 1; renderFilmstrip(); });
-  document.querySelector('[data-filmstrip-next]')?.addEventListener('click', () => { state.filmstripPage += 1; renderFilmstrip(); });
+  document.querySelector('[data-filmstrip-prev]')?.addEventListener('click', () => {
+    participantGrid.setPage(participantGrid.getPage() - 1);
+    render();
+  });
+  document.querySelector('[data-filmstrip-next]')?.addEventListener('click', () => {
+    participantGrid.setPage(participantGrid.getPage() + 1);
+    render();
+  });
   document.querySelector('[data-chat-form]')?.addEventListener('submit', handleChatSubmit);
   document.querySelector('[data-participant-search]')?.addEventListener('input', handleParticipantSearch);
   document.querySelector('[data-open-invite]')?.addEventListener('click', openInviteModal);
@@ -2935,6 +2957,7 @@ async function initialize() {
   }
   state.hostName = meetingContext.meeting?.hostName || 'Chủ phòng';
   state.participants = createParticipants();
+  if (!state.userSelectedView && getParticipants().length > 1) state.view = 'grid';
   state.waitingParticipants = createWaitingParticipants();
   state.unsubscribeMeetingEvents = subscribeMeetingEvents(handleMeetingEvent);
   state.unsubscribeScreenShare = subscribeScreenShare(handleScreenShareState);

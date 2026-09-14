@@ -14,16 +14,32 @@ function parseMetadata(participant) {
 
 function participantSnapshot(participant, local = false) {
   const metadata = parseMetadata(participant);
+  const cameraPublication = participant?.getTrackPublication?.(Track.Source.Camera) || null;
+  const microphonePublication = participant?.getTrackPublication?.(Track.Source.Microphone) || null;
+  const screenSharePublication = participant?.getTrackPublication?.(Track.Source.ScreenShare) || null;
   return {
     id: String(metadata.participantId || participant?.identity || '').trim(),
+    identity: String(participant?.identity || '').trim(),
+    participantId: String(metadata.participantId || '').trim(),
     userId: String(metadata.userId || '').trim(),
     sessionId: String(metadata.sessionId || '').trim(),
     livekitIdentity: String(participant?.identity || '').trim(),
     name: String(participant?.name || 'Gmail user').trim() || 'Gmail user',
     role: String(metadata.role || 'member').trim(),
+    roleFromMetadata: Boolean(metadata.role),
+    isConnected: true,
     local,
-    cameraEnabled: Boolean(participant?.isCameraEnabled),
-    microphoneEnabled: Boolean(participant?.isMicrophoneEnabled),
+    cameraPublication,
+    microphonePublication,
+    screenSharePublication,
+    cameraTrack: cameraPublication?.track || null,
+    microphoneTrack: microphonePublication?.track || null,
+    screenShareTrack: screenSharePublication?.track || null,
+    cameraEnabled: Boolean(cameraPublication && !cameraPublication.isMuted),
+    microphoneEnabled: Boolean(microphonePublication && !microphonePublication.isMuted),
+    screenShareActive: Boolean(screenSharePublication && !screenSharePublication.isMuted),
+    screenSharing: Boolean(screenSharePublication && !screenSharePublication.isMuted),
+    audioLevel: Number(participant?.audioLevel || 0),
     shareScreenAllowed: metadata.shareScreenAllowed !== false,
     handRaised: Boolean(metadata.handRaised),
     speaking: Boolean(participant?.isSpeaking)
@@ -68,9 +84,9 @@ export function createLiveKitRoomController({
     onParticipants?.(participants);
   }
 
-  function emitParticipant(participant, local = false) {
+  function emitParticipant(participant, local = false, eventType = 'updated', source = '') {
     const snapshot = participantSnapshot(participant, local);
-    if (snapshot.id) onParticipant?.(snapshot);
+    if (snapshot.id) onParticipant?.({ ...snapshot, eventType, source });
     emitParticipants();
   }
 
@@ -81,6 +97,10 @@ export function createLiveKitRoomController({
 
   function handleSubscribed(track, publication, participant) {
     const key = `${participant.identity}:${publication.source}`;
+    const previous = remoteTracks.get(key);
+    previous?.track?.detach?.();
+    audioElements.get(key)?.audio?.remove();
+    audioElements.delete(key);
     remoteTracks.set(key, { track, publication, participant });
     if (publication.source === Track.Source.Microphone || publication.source === Track.Source.ScreenShareAudio) {
       const audio = track.attach();
@@ -105,7 +125,6 @@ export function createLiveKitRoomController({
     audioElements.delete(key);
     remoteTracks.delete(key);
     onTrackRemoved?.({ track, publication, participant, source: publication.source });
-    emitParticipant(participant);
   }
 
   function handleData(payload, participant, _kind, topic) {
@@ -142,7 +161,7 @@ export function createLiveKitRoomController({
       onConnection?.('DISCONNECTED');
       onDisconnected?.(reason);
     });
-    bind(RoomEvent.ParticipantConnected, (participant) => emitParticipant(participant));
+    bind(RoomEvent.ParticipantConnected, (participant) => emitParticipant(participant, false, 'connected'));
     bind(RoomEvent.ParticipantDisconnected, (participant, reason) => {
       for (const [key, entry] of remoteTracks) {
         if (entry.participant.identity !== participant.identity) continue;
@@ -151,15 +170,22 @@ export function createLiveKitRoomController({
         audioElements.delete(key);
         remoteTracks.delete(key);
       }
-      onParticipant?.({ id: participantSnapshot(participant).id, livekitIdentity: participant.identity, disconnected: true, reason });
+      onParticipant?.({
+        id: participantSnapshot(participant).id,
+        identity: participant.identity,
+        livekitIdentity: participant.identity,
+        disconnected: true,
+        eventType: 'disconnected',
+        reason
+      });
       emitParticipants();
     });
     bind(RoomEvent.TrackSubscribed, handleSubscribed);
     bind(RoomEvent.TrackUnsubscribed, handleUnsubscribed);
-    bind(RoomEvent.TrackPublished, (publication, participant) => emitParticipant(participant));
-    bind(RoomEvent.TrackUnpublished, (publication, participant) => emitParticipant(participant));
-    bind(RoomEvent.TrackMuted, (_publication, participant) => emitParticipant(participant));
-    bind(RoomEvent.TrackUnmuted, (_publication, participant) => emitParticipant(participant));
+    bind(RoomEvent.TrackPublished, (publication, participant) => emitParticipant(participant, false, 'track-published', publication.source));
+    bind(RoomEvent.TrackUnpublished, (publication, participant) => emitParticipant(participant, false, 'track-unpublished', publication.source));
+    bind(RoomEvent.TrackMuted, (publication, participant) => emitParticipant(participant, false, 'track-muted', publication.source));
+    bind(RoomEvent.TrackUnmuted, (publication, participant) => emitParticipant(participant, false, 'track-unmuted', publication.source));
     bind(RoomEvent.ParticipantMetadataChanged, (_metadata, participant) => emitParticipant(participant, participant === room.localParticipant));
     bind(RoomEvent.ParticipantAttributesChanged, (_attributes, participant) => emitParticipant(participant, participant === room.localParticipant));
     bind(RoomEvent.ParticipantNameChanged, (_name, participant) => emitParticipant(participant, participant === room.localParticipant));
@@ -252,6 +278,14 @@ export function createLiveKitRoomController({
     return true;
   }
 
+  function detachRemoteTrack(livekitIdentity, source, element) {
+    const entry = remoteTracks.get(`${livekitIdentity}:${source}`);
+    if (!entry?.track) return false;
+    entry.track.detach?.(element);
+    if (element) element.srcObject = null;
+    return true;
+  }
+
   function detachAllTracks() {
     for (const [key, { track }] of remoteTracks) {
       if (key.endsWith(':camera') || key.endsWith(':screen_share')) track.detach?.();
@@ -297,6 +331,7 @@ export function createLiveKitRoomController({
     stopScreenShare,
     publishData,
     attachRemoteTrack,
+    detachRemoteTrack,
     detachAllTracks,
     startAudio,
     get room() { return room; },
