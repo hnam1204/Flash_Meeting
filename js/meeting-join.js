@@ -1,6 +1,7 @@
 import { authService } from './auth-service.js';
 import { JOIN_MEETING_ERROR_CODES, meetingService } from './meeting-service.js';
 import { getPageUrl, isLikelyRoomCode, normalizeRoomCode, setStatus } from './utils.js';
+import { redirectToLogin } from './auth-guard.js';
 import { modal } from './ui/modal-manager.js';
 import { renderIcons } from './ui/icons.js';
 
@@ -25,6 +26,7 @@ const roomCodeInput = form?.elements.roomCode;
 const displayNameInput = form?.elements.displayName;
 const submitButton = document.querySelector('[data-join-submit]');
 const submitLabel = document.querySelector('[data-join-submit-label]');
+let roomParamState = { hasParam: false, valid: true, roomCode: '' };
 
 renderIcons();
 
@@ -156,7 +158,20 @@ function showError(code) {
 function prefillFromUrl() {
   const params = new URLSearchParams(window.location.search);
   const rawRoomCode = params.get('room');
-  if (rawRoomCode) roomCodeInput.value = normalizeRoomCode(rawRoomCode);
+  const roomCode = normalizeRoomCode(rawRoomCode);
+  roomParamState = {
+    hasParam: params.has('room'),
+    valid: !params.has('room') || isLikelyRoomCode(roomCode),
+    roomCode
+  };
+  if (roomParamState.hasParam && roomParamState.valid) {
+    roomCodeInput.value = roomCode;
+    setBanner('Bạn được mời tham gia cuộc họp. Mã phòng đã được điền sẵn.', 'info');
+  }
+  if (roomParamState.hasParam && !roomParamState.valid) {
+    setBanner('Mã phòng không hợp lệ.', 'error');
+    setFieldError('roomCode', 'Mã phòng không hợp lệ.');
+  }
 
   const session = authService.getSession();
   if (session?.displayName && !displayNameInput.value) displayNameInput.value = session.displayName;
@@ -175,8 +190,12 @@ async function initializeJoinPage() {
   await wait(180);
   setFormDisabled(false);
   form.setAttribute('aria-busy', 'false');
-  setJoinState(JOIN_STATES.READY);
-  updateOfflineState();
+  setJoinState(roomParamState.valid ? JOIN_STATES.READY : JOIN_STATES.ERROR);
+  if (roomParamState.valid) updateOfflineState();
+  else {
+    submitButton.disabled = true;
+    setStatusMessage('Mã phòng không hợp lệ.', 'error');
+  }
 }
 
 async function handleSubmit(event) {
@@ -208,6 +227,11 @@ async function handleSubmit(event) {
     result = { success: false, code: JOIN_MEETING_ERROR_CODES.JOIN_FAILED };
   }
   if (!result.success) {
+    if (result.code === JOIN_MEETING_ERROR_CODES.AUTH_REQUIRED) {
+      modal.close();
+      redirectToLogin({ nextRoute: `${window.location.pathname}${window.location.search}${window.location.hash}` });
+      return;
+    }
     showError(result.code);
     modal.error({
       title: 'Không thể tham gia cuộc họp',
@@ -231,6 +255,7 @@ function clearErrorOnInput() {
   form?.querySelectorAll('input').forEach((input) => {
     input.addEventListener('input', () => {
       setFieldError(input.name, '');
+      if (banner && ['info', 'error'].includes(banner.dataset.state)) setBanner('');
       if (page.dataset.joinState === JOIN_STATES.ERROR) {
         setJoinState(JOIN_STATES.READY);
         setStatusMessage('');

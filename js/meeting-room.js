@@ -42,6 +42,7 @@ import {
 import { getPageUrl } from './utils.js';
 import { protectPage, registerAuthExpiryCleanup, revalidateSessionSilently } from './auth-guard.js';
 import { createMeetingRecordingController, RECORDING_STATES } from './meeting-recording.js';
+import { copyToClipboard, createMeetingInviteController } from './meeting-invite.js';
 import { createLiveKitRoomController } from './livekit-room-controller.js';
 import {
   createMeetingRealtimeController,
@@ -197,6 +198,19 @@ const recordingController = createMeetingRecordingController({
     };
   },
   onStateChange: handleRecordingState
+});
+
+const inviteController = createMeetingInviteController({
+  getMeeting: () => {
+    const meeting = meetingContext?.meeting || getStoredJoinedMeeting() || {};
+    return {
+      ...meeting,
+      title: meeting.title || state.meetingTitle,
+      roomCode: meeting.roomCode || state.roomCode,
+      maxParticipants: meeting.maxParticipants || MAX_PARTICIPANTS
+    };
+  },
+  getParticipantCount: () => state.participants ? getParticipants().length : null
 });
 
 function readSession(key) {
@@ -1400,69 +1414,13 @@ function showToast(message) {
   state.toastTimer = window.setTimeout(() => { toast.hidden = true; }, 2800);
 }
 
-function getMeetingLink() {
-  const link = new URL(getPageUrl('join-meeting.html'), window.location.href);
-  link.searchParams.set('room', state.roomCode);
-  return link.href;
-}
-
-async function copyText(value, successMessage) {
-  try {
-    await navigator.clipboard.writeText(value);
-    showToast(successMessage);
-  } catch {
-    showToast('Không thể sao chép tự động. Hãy thử lại trên trình duyệt được hỗ trợ.');
-  }
-}
-
-function createInviteRow(label, value, actionLabel, onCopy) {
-  const row = document.createElement('div');
-  row.className = 'fm-modal__invite-value';
-  const labelNode = document.createElement('span');
-  labelNode.textContent = label;
-  const valueNode = document.createElement('strong');
-  valueNode.textContent = value;
-  const copyButton = document.createElement('button');
-  copyButton.type = 'button';
-  copyButton.append(createIcon('copy'));
-  copyButton.setAttribute('aria-label', actionLabel);
-  copyButton.addEventListener('click', onCopy);
-  renderIcons(copyButton);
-  row.append(labelNode, valueNode, copyButton);
-  return row;
-}
-
-function createInviteContent() {
-  const wrapper = document.createElement('div');
-  wrapper.append(
-    createInviteRow('Mã phòng', state.roomCode, 'Sao chép mã phòng', () => copyText(state.roomCode, 'Đã sao chép mã phòng.')),
-    createInviteRow('Liên kết cuộc họp', getMeetingLink(), 'Sao chép liên kết cuộc họp', () => copyText(getMeetingLink(), 'Đã sao chép liên kết mời.'))
-  );
-
-  if (getParticipants().length >= MAX_PARTICIPANTS) {
-    const capacityNote = document.createElement('p');
-    capacityNote.className = 'fm-modal__invite-note';
-    capacityNote.textContent = `Cuộc họp hiện đã đủ ${MAX_PARTICIPANTS} người. Người mới có thể không vào được phòng.`;
-    wrapper.append(capacityNote);
-  }
-
-  const copyButton = document.createElement('button');
-  copyButton.type = 'button';
-  copyButton.className = 'button button-primary fm-modal__invite-copy';
-  copyButton.textContent = 'Sao chép liên kết';
-  copyButton.addEventListener('click', () => copyText(getMeetingLink(), 'Đã sao chép liên kết mời.'));
-  wrapper.append(copyButton);
-  return wrapper;
-}
-
 function openInviteModal() {
-  modal.info({
-    eyebrow: 'Mời thành viên',
-    title: 'Mời mọi người vào phòng',
-    message: 'Chia sẻ mã phòng hoặc liên kết này với người bạn muốn mời.',
-    content: createInviteContent(),
-    confirmText: 'Đóng'
-  });
+  inviteController.open();
+}
+
+async function copyRoomCode() {
+  const copied = await copyToClipboard(state.roomCode);
+  showToast(copied ? 'Đã sao chép mã phòng.' : 'Không thể sao chép mã phòng.');
 }
 
 function openLeaveMenu() {
@@ -2928,8 +2886,7 @@ function bindEvents() {
   document.querySelector('[data-participant-search]')?.addEventListener('input', handleParticipantSearch);
   document.querySelector('[data-open-invite]')?.addEventListener('click', openInviteModal);
   document.querySelector('[data-leave-meeting]')?.addEventListener('click', openLeaveMenu);
-  document.querySelectorAll('[data-copy-room]').forEach((button) => button.addEventListener('click', () => copyText(state.roomCode, 'Đã sao chép mã phòng.')));
-  document.querySelectorAll('[data-copy-link]').forEach((button) => button.addEventListener('click', () => copyText(getMeetingLink(), 'Đã sao chép liên kết cuộc họp.')));
+  document.querySelectorAll('[data-copy-room]').forEach((button) => button.addEventListener('click', copyRoomCode));
   window.addEventListener('resize', () => renderFilmstrip());
   window.addEventListener('pagehide', handlePageHide);
   window.addEventListener('pageshow', handlePageShow);

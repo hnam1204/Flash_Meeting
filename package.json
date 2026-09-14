@@ -12,7 +12,8 @@
   "dependencies": {
     "@supabase/supabase-js": "^2.116.0",
     "livekit-client": "^2.15.0",
-    "lucide": "^1.45.0"
+    "lucide": "^1.45.0",
+    "qrcode": "^1.5.4"
   },
   "devDependencies": {
     "supabase": "^2.117.0",

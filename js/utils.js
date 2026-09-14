@@ -26,9 +26,10 @@ export function normalizeRoomCode(value) {
   if (!input) return '';
 
   try {
-    const parsedUrl = new URL(input);
+    const parsedUrl = new URL(input, globalThis.location?.href || 'http://localhost/');
+    const queryRoomCode = parsedUrl.searchParams.get('room');
     const fromPath = parsedUrl.pathname.split('/').filter(Boolean).pop();
-    return (fromPath || '').replace(/[^a-z0-9-]/gi, '').toUpperCase();
+    return String(queryRoomCode || fromPath || '').replace(/[^a-z0-9-]/gi, '').toUpperCase();
   } catch {
     return input.replace(/[^a-z0-9-]/gi, '').toUpperCase();
   }
@@ -36,6 +37,15 @@ export function normalizeRoomCode(value) {
 
 export function isLikelyRoomCode(value) {
   return /^[A-Z0-9]{3,}(?:-[A-Z0-9]{2,})*$/.test(normalizeRoomCode(value));
+}
+
+export function getMeetingInviteUrl(roomCode) {
+  const normalizedRoomCode = normalizeRoomCode(roomCode);
+  if (!isLikelyRoomCode(normalizedRoomCode)) return '';
+
+  const inviteUrl = new URL(getPageUrl('join-meeting.html'), window.location.href);
+  inviteUrl.searchParams.set('room', normalizedRoomCode);
+  return inviteUrl.href;
 }
 
 export function readStoredRoomCode() {

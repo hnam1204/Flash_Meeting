@@ -289,6 +289,52 @@
 
 .meeting-toast { position: fixed; z-index: 60; right: 22px; bottom: 102px; max-width: 320px; padding: 11px 14px; border: 1px solid var(--fm-border); border-radius: var(--fm-radius-sm); color: var(--fm-text-primary); background: var(--fm-bg-surface); box-shadow: var(--fm-shadow-lg); font-size: var(--fm-text-sm); }
 
+.fm-modal.fm-invite-modal { width: min(100%, 720px); }
+.fm-invite-layout { display: grid; grid-template-columns: minmax(190px, 220px) minmax(0, 1fr); gap: 14px 20px; }
+.fm-invite-details { display: grid; min-width: 0; grid-column: 2; grid-row: 1; gap: 14px; }
+.fm-invite-meeting { display: grid; min-width: 0; gap: 4px; }
+.fm-invite-label { color: var(--fm-text-muted); font-size: var(--fm-text-xs); font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
+.fm-invite-meeting-title { overflow: hidden; color: var(--fm-text-primary); font-size: var(--fm-text-lg); text-overflow: ellipsis; white-space: nowrap; }
+.fm-invite-participant-count { color: var(--fm-success); font-size: var(--fm-text-sm); }
+.fm-invite-code { display: grid; gap: 7px; padding: 12px 13px; border: 1px solid var(--fm-border); border-radius: var(--fm-radius-md); background: var(--fm-surface-warm); }
+.fm-invite-code-value { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 12px; }
+.fm-invite-code-value strong { overflow: hidden; color: var(--fm-brand-hover); font-size: var(--fm-text-xl); letter-spacing: .08em; text-overflow: ellipsis; white-space: nowrap; }
+.fm-invite-copy-code { width: 44px; height: 44px; flex: 0 0 auto; }
+.fm-invite-copy-code .lucide { width: 18px; height: 18px; }
+.fm-invite-qr-column { display: grid; grid-column: 1; grid-row: 1 / span 3; align-content: start; justify-items: center; gap: 10px; padding: 12px; border: 1px solid var(--fm-border); border-radius: var(--fm-radius-md); background: var(--fm-bg-subtle); text-align: center; }
+.fm-invite-qr { display: grid; width: min(100%, 210px); aspect-ratio: 1; place-items: center; overflow: hidden; border: 8px solid #fff; border-radius: var(--fm-radius-sm); background: #fff; box-shadow: var(--fm-shadow-sm); }
+.fm-invite-qr img { display: block; width: 100%; height: 100%; image-rendering: pixelated; }
+.fm-invite-qr-status { padding: 12px; color: var(--fm-text-muted); font-size: var(--fm-text-sm); }
+.fm-invite-qr[data-state='error'] .fm-invite-qr-status { color: var(--fm-danger); }
+.fm-invite-qr-helper { margin: 0; color: var(--fm-text-secondary); font-size: var(--fm-text-sm); line-height: 1.4; }
+.fm-invite-link { display: grid; min-width: 0; grid-column: 2; grid-row: 2; gap: 7px; }
+.fm-invite-link code { display: block; min-width: 0; padding: 10px 11px; overflow-wrap: anywhere; border: 1px solid var(--fm-border); border-radius: var(--fm-radius-sm); color: var(--fm-text-secondary); background: var(--fm-bg-subtle); font-family: var(--fm-font-family); font-size: var(--fm-text-sm); line-height: 1.45; }
+.fm-invite-actions { display: flex; flex-wrap: wrap; grid-column: 2; grid-row: 3; gap: 9px; }
+.fm-invite-actions .button { min-height: 46px; }
+.fm-invite-copy-link { flex: 1 1 180px; }
+.fm-invite-share { flex: 0 0 auto; }
+.fm-invite-share .lucide, .fm-invite-copy-link .lucide { width: 18px; height: 18px; }
+.fm-invite-feedback { min-height: 20px; margin: 0; grid-column: 2; grid-row: 4; color: var(--fm-success); font-size: var(--fm-text-sm); }
+.fm-invite-modal .fm-modal__actions { margin-top: 16px; }
+
+@media (max-width: 680px) {
+  .fm-modal.fm-invite-modal { width: min(100%, 520px); }
+  .fm-invite-layout { grid-template-columns: minmax(0, 1fr); gap: 14px; }
+  .fm-invite-details, .fm-invite-qr-column, .fm-invite-link, .fm-invite-actions, .fm-invite-feedback { grid-column: 1; }
+  .fm-invite-details { grid-row: 1; }
+  .fm-invite-qr-column { grid-row: 2; }
+  .fm-invite-qr { width: min(100%, 190px); }
+  .fm-invite-link { grid-row: 3; }
+  .fm-invite-actions { grid-row: 4; }
+  .fm-invite-feedback { grid-row: 5; }
+}
+
+@media (max-width: 430px) {
+  .fm-modal.fm-invite-modal { padding: 18px; }
+  .fm-invite-actions { display: grid; }
+  .fm-invite-actions .button { width: 100%; }
+}
+
 @keyframes meeting-pulse { 0%, 100% { opacity: .3; transform: translateY(0); } 50% { opacity: 1; transform: translateY(-5px); } }
 @keyframes voice-bars { to { opacity: .45; transform: scaleY(.55); } }
 @keyframes recording-pulse { 0%, 100% { opacity: .56; } 50% { opacity: 1; } }
