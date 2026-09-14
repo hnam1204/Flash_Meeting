@@ -223,13 +223,52 @@
               <button class="raise-hand-button" type="button" data-raise-hand><i data-lucide="hand" aria-hidden="true"></i> <span data-raise-hand-label>Giơ tay</span></button>
             </div>
           </div>
-          <button class="toolbar-button toolbar-more-mobile" type="button" data-panel-trigger="info" aria-expanded="false">
+          <button class="toolbar-button toolbar-more-mobile" type="button" data-mobile-more aria-expanded="false">
             <span class="toolbar-icon" aria-hidden="true"><i data-lucide="ellipsis"></i></span><span>Thêm</span><small>Tùy chọn</small>
           </button>
         </div>
         <button class="leave-button" type="button" data-leave-meeting><i data-lucide="phone-off" aria-hidden="true"></i><span>Rời cuộc họp</span></button>
       </footer>
 
+      <div class="mobile-more-backdrop" data-mobile-more-backdrop hidden></div>
+      <section class="mobile-more-sheet" data-mobile-more-sheet role="dialog" aria-modal="true" aria-labelledby="mobile-more-title" hidden>
+        <div class="mobile-more-handle" aria-hidden="true"></div>
+        <header class="mobile-more-header">
+          <h2 id="mobile-more-title" data-mobile-more-title tabindex="-1">Thêm tùy chọn</h2>
+          <button class="mobile-more-close" type="button" data-mobile-more-close aria-label="Đóng tùy chọn"><i data-lucide="x" aria-hidden="true"></i></button>
+        </header>
+        <div class="mobile-more-body">
+          <div data-mobile-more-home>
+            <button class="mobile-more-action" type="button" data-mobile-action="reaction-menu"><i data-lucide="smile" aria-hidden="true"></i><span>Phản ứng</span><i class="mobile-more-chevron" data-lucide="chevron-right" aria-hidden="true"></i></button>
+            <button class="mobile-more-action" type="button" data-mobile-action="raise-hand"><i data-lucide="hand" aria-hidden="true"></i><span data-mobile-raise-hand-label>Giơ tay</span></button>
+            <button class="mobile-more-action" type="button" data-mobile-action="share"><i data-lucide="screen-share" aria-hidden="true"></i><span data-mobile-share-label>Chia sẻ màn hình</span></button>
+            <button class="mobile-more-action" type="button" data-mobile-action="recording" hidden><i data-lucide="circle" aria-hidden="true"></i><span data-mobile-recording-label>Ghi hình</span></button>
+            <button class="mobile-more-action" type="button" data-mobile-action="invite"><i data-lucide="user-plus" aria-hidden="true"></i><span>Mời người</span></button>
+            <button class="mobile-more-action" type="button" data-mobile-action="layout-menu"><i data-lucide="bar-chart-3" aria-hidden="true"></i><span>Bố cục</span><strong data-mobile-layout-label>Lưới</strong><i class="mobile-more-chevron" data-lucide="chevron-right" aria-hidden="true"></i></button>
+            <button class="mobile-more-action" type="button" data-mobile-action="info"><i data-lucide="info" aria-hidden="true"></i><span>Thông tin cuộc họp</span></button>
+            <button class="mobile-more-action" type="button" data-mobile-action="devices"><i data-lucide="user-cog" aria-hidden="true"></i><span>Thiết bị</span></button>
+          </div>
+          <div class="mobile-more-submenu" data-mobile-more-reactions hidden>
+            <button class="mobile-more-back" type="button" data-mobile-more-back><i data-lucide="arrow-left" aria-hidden="true"></i> Phản ứng</button>
+            <div class="mobile-reaction-grid">
+              <button type="button" data-mobile-action="reaction" data-reaction="👍" aria-label="Thích">👍</button>
+              <button type="button" data-mobile-action="reaction" data-reaction="❤️" aria-label="Yêu thích">❤️</button>
+              <button type="button" data-mobile-action="reaction" data-reaction="😂" aria-label="Cười">😂</button>
+              <button type="button" data-mobile-action="reaction" data-reaction="🎉" aria-label="Chúc mừng">🎉</button>
+              <button type="button" data-mobile-action="reaction" data-reaction="👏" aria-label="Vỗ tay">👏</button>
+            </div>
+          </div>
+          <div class="mobile-more-submenu" data-mobile-more-layout-options hidden>
+            <button class="mobile-more-back" type="button" data-mobile-more-back><i data-lucide="arrow-left" aria-hidden="true"></i> Bố cục</button>
+            <div class="mobile-layout-options" role="radiogroup" aria-label="Bố cục cuộc họp">
+              <button type="button" data-mobile-action="layout" data-view="grid" role="radio" aria-checked="false"><i data-lucide="bar-chart-3" aria-hidden="true"></i><span>Lưới</span></button>
+              <button type="button" data-mobile-action="layout" data-view="speaker" role="radio" aria-checked="false"><i data-lucide="user-round" aria-hidden="true"></i><span>Người nói</span></button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <div class="meeting-activity-feed" data-activity-feed role="status" aria-live="polite" aria-atomic="false"></div>
       <div class="meeting-toast" data-toast role="status" aria-live="polite" hidden></div>
     </main>
 

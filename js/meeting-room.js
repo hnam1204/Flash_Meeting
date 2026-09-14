@@ -54,6 +54,8 @@ import {
 import { modal } from './ui/modal-manager.js';
 import { createIcon, renderIcons, setIcon } from './ui/icons.js';
 import { createParticipantGridController } from './meeting-participant-grid.js';
+import { createMobileActionsController } from './meeting-mobile-actions.js';
+import { createMeetingActivityFeed } from './meeting-activity-feed.js';
 
 const MAX_PARTICIPANTS = MAX_MEETING_PARTICIPANTS;
 const DEFAULT_DURATION_SECONDS = (24 * 60) + 17;
@@ -140,6 +142,8 @@ const state = {
   sessionId: getMeetingSessionId(),
   participantId: '',
   liveKitConnected: false,
+  connectionState: 'CONNECTING',
+  reconnectingParticipantKeys: new Set(),
   liveKitParticipantsHydrated: false,
   initialLiveKitParticipantKeys: new Set(),
   realtimeParticipantsHydrated: false,
@@ -234,6 +238,28 @@ const participantGrid = createParticipantGridController({
     state.activeParticipantId = participantId;
     render();
   }
+});
+
+const activityFeed = createMeetingActivityFeed({
+  element: document.querySelector('[data-activity-feed]')
+});
+
+const mobileActions = createMobileActionsController({
+  getState: () => ({
+    isHost: state.role === PARTICIPANT_ROLES.HOST,
+    localHandRaised: Boolean(getLocalParticipant()?.handRaised),
+    localSharing: Boolean(state.screenShare.isLocalPresenter),
+    recordingActive: recordingController.isActive(),
+    view: state.view
+  }),
+  onReaction: handleReaction,
+  onRaiseHand: toggleRaiseHand,
+  onShare: handleShare,
+  onRecording: handleRecordingToggle,
+  onInvite: openInviteModal,
+  onLayout: setView,
+  onInfo: () => setPanel('info'),
+  onDevices: () => showToast('Thiết lập thiết bị sẽ dùng lại lựa chọn từ bước Pre-Join.')
 });
 
 function readSession(key) {
@@ -1168,7 +1194,8 @@ function renderShareSupport() {
       shareButton.removeAttribute('aria-label');
     }
   }
-  if (supportNote) supportNote.hidden = supported;
+  // Unsupported sharing is reported only after the user explicitly starts the action.
+  if (supportNote) supportNote.hidden = true;
 }
 
 function renderView() {
@@ -1279,6 +1306,7 @@ function render() {
   if (!unread.hidden) unread.textContent = String(state.unreadCount);
   setText('[data-raise-hand-label]', getLocalParticipant().handRaised ? 'Hạ tay' : 'Giơ tay');
   updateRecordingUi();
+  mobileActions.render();
 }
 
 function setPanel(panelName) {
@@ -1306,6 +1334,11 @@ function closeMoreMenu() {
 }
 
 function toggleMoreMenu() {
+  if (mobileActions.isMobileViewport) {
+    closeMoreMenu();
+    mobileActions.toggle(document.querySelector('[data-more-toggle]'));
+    return;
+  }
   const menu = document.querySelector('[data-more-menu]');
   const toggle = document.querySelector('[data-more-toggle]');
   const nextOpen = menu.hidden;
@@ -2016,6 +2049,21 @@ function isLocalRealtimeParticipant(participant) {
   ));
 }
 
+function canPublishActivity() {
+  return !isDemoMode
+    && state.connectionState === 'CONNECTED'
+    && state.liveKitConnected
+    && !state.isCleaningUp
+    && !state.meetingEndHandled;
+}
+
+function activityParticipant(participant) {
+  return {
+    participantId: participant?.id || participant?.participantId || participant?.livekitIdentity,
+    name: participant?.name || participant?.displayName || 'Một thành viên'
+  };
+}
+
 function removeParticipantEverywhere(participantId) {
   state.participants?.remove(participantId);
   state.waitingParticipants = state.waitingParticipants.filter((participant) => participant.id !== participantId);
@@ -2040,11 +2088,12 @@ function handleRemoteParticipantRemoved() {
   });
 }
 
-function mergeRealtimeParticipant(value, eventType = 'UPDATE') {
+function mergeRealtimeParticipant(value, eventType = 'UPDATE', { suppressActivity = false } = {}) {
   const participant = normalizeRealtimeParticipant(value) || value;
   if (!participant) return;
   const local = isLocalRealtimeParticipant(participant);
   const existingBeforeChange = state.participants ? findParticipant(participant.id) : null;
+  const activityAllowed = canPublishActivity() && !suppressActivity;
   if (local && ['removed', 'blocked', 'rejected'].includes(participant.status)) {
     handleRemoteParticipantRemoved();
     return;
@@ -2056,9 +2105,10 @@ function mergeRealtimeParticipant(value, eventType = 'UPDATE') {
   const isActive = ['joining', 'admitted'].includes(participant.status);
   if (!isActive && !isWaiting || eventType === 'DELETE') {
     if (existingBeforeChange && !local && state.realtimeParticipantsHydrated) {
-      showToast(['removed', 'blocked'].includes(participant.status)
-        ? `${existingBeforeChange.name} đã bị xóa khỏi cuộc họp`
-        : `${existingBeforeChange.name} đã rời cuộc họp`);
+      if (activityAllowed) {
+        if (['removed', 'blocked'].includes(participant.status)) activityFeed.removed(activityParticipant(existingBeforeChange));
+        else activityFeed.left(activityParticipant(existingBeforeChange));
+      }
     }
     removeParticipantEverywhere(uiParticipant.id);
     render();
@@ -2087,9 +2137,17 @@ function mergeRealtimeParticipant(value, eventType = 'UPDATE') {
 
   if (eventType === 'connected' || eventType === 'INSERT') {
     if (!local && state.realtimeParticipantsHydrated
-      && (eventType === 'INSERT' || state.liveKitParticipantsHydrated)) {
-      showToast(`${uiParticipant.name} đã tham gia cuộc họp`);
+      && (eventType === 'INSERT' || state.liveKitParticipantsHydrated)
+      && activityAllowed) {
+      activityFeed.joined(activityParticipant(uiParticipant));
     }
+  }
+
+  const wasSharing = Boolean(existingBeforeChange?.screenSharing || existingBeforeChange?.screenShareActive);
+  const isSharing = Boolean(participant.screenSharing || participant.screenShareActive);
+  if (!local && existingBeforeChange && wasSharing !== isSharing && activityAllowed) {
+    if (isSharing) activityFeed.shareStarted(activityParticipant(uiParticipant));
+    else activityFeed.shareStopped(activityParticipant(uiParticipant));
   }
 
   if (!local && participant.screenSharing) {
@@ -2232,10 +2290,14 @@ function handleLiveKitParticipants(values) {
 function handleLiveKitParticipant(value) {
   if (!value) return;
   if (value.disconnected) {
+    if (state.connectionState === 'RECONNECTING') {
+      state.reconnectingParticipantKeys.add(String(value.id || value.livekitIdentity || '').trim());
+      return;
+    }
     const existing = findParticipantByLiveKitIdentity(value.livekitIdentity) || getParticipants().find((item) => item.id === value.id);
     if (existing) {
       if (state.liveKitParticipantsHydrated && !existing.local && !state.meetingEndHandled) {
-        showToast(`${existing.name} đã rời cuộc họp`);
+        if (canPublishActivity()) activityFeed.left(activityParticipant(existing));
       }
       removeParticipantEverywhere(existing.id);
       render();
@@ -2244,6 +2306,8 @@ function handleLiveKitParticipant(value) {
   }
   const existing = findParticipantByLiveKitIdentity(value.livekitIdentity);
   const liveKitKey = String(value.id || value.livekitIdentity || '').trim();
+  const reconnectingParticipant = state.reconnectingParticipantKeys.has(liveKitKey);
+  state.reconnectingParticipantKeys.delete(liveKitKey);
   const isInitialParticipant = state.initialLiveKitParticipantKeys.has(liveKitKey);
   state.initialLiveKitParticipantKeys.delete(liveKitKey);
   mergeRealtimeParticipant({
@@ -2252,7 +2316,7 @@ function handleLiveKitParticipant(value) {
     id: value.id || existing?.id || value.livekitIdentity,
     status: 'admitted',
     eventType: value.eventType || 'updated'
-  }, isInitialParticipant ? 'updated' : value.eventType || 'UPDATE');
+  }, isInitialParticipant ? 'updated' : value.eventType || 'UPDATE', { suppressActivity: reconnectingParticipant });
   const updatedParticipant = findParticipantByLiveKitIdentity(value.livekitIdentity)
     || getParticipants().find((participant) => participant.id === value.id);
   if (updatedParticipant && ['camera', 'microphone', 'screen_share'].includes(value.source)
@@ -2398,6 +2462,7 @@ async function initializeRealtimeMeeting() {
       render();
     },
     onConnection: (connectionState) => {
+      state.connectionState = connectionState;
       state.liveKitConnected = connectionState === 'CONNECTED';
       if (connectionState === 'RECONNECTING') {
         const indicator = document.querySelector('[data-connection-indicator]');
@@ -2409,6 +2474,8 @@ async function initializeRealtimeMeeting() {
       }
     },
     onDisconnected: (reason) => {
+      state.connectionState = 'DISCONNECTED';
+      state.liveKitConnected = false;
       const reasonValue = String(reason || '').toLowerCase();
       if (reasonValue.includes('removed')) handleRemoteParticipantRemoved();
       else if (reasonValue.includes('deleted') || reasonValue.includes('room')) void handleRemoteMeetingEnded();
@@ -2441,6 +2508,7 @@ async function initializeRealtimeMeeting() {
   const liveKitResult = await state.liveKit.connect({ token: tokenResult.token, livekitUrl: tokenResult.livekitUrl });
   if (!liveKitResult.success) return liveKitResult;
   state.liveKitConnected = true;
+  state.connectionState = 'CONNECTED';
   await publishLocalMediaToLiveKit();
   return { success: true };
 }
@@ -2556,6 +2624,7 @@ function cleanup({ finalizeRecording = true } = {}) {
   try { await state.liveKit?.disconnect?.({ stopTracks: false }); } catch { /* LiveKit cleanup is best effort. */ }
   state.meetingRealtime?.close?.();
   state.meetingRealtime = null;
+  activityFeed.destroy();
   state.liveKit?.close?.();
   state.liveKit = null;
   try { state.unsubscribeMeetingEvents?.(); } catch { /* Runtime cleanup is best effort. */ }
@@ -2855,6 +2924,7 @@ function bindEvents() {
   document.querySelectorAll('[data-panel-trigger]').forEach((button) => button.addEventListener('click', () => setPanel(button.dataset.panelTrigger)));
   document.querySelector('[data-close-panel]')?.addEventListener('click', closePanel);
   document.querySelector('[data-more-toggle]')?.addEventListener('click', toggleMoreMenu);
+  document.querySelector('[data-mobile-more]')?.addEventListener('click', (event) => mobileActions.toggle(event.currentTarget));
   document.querySelectorAll('[data-more-action]').forEach((button) => button.addEventListener('click', () => {
     if (button.dataset.moreAction === 'info') setPanel('info');
     if (button.dataset.moreAction === 'grid') setView('grid');
@@ -2922,6 +2992,10 @@ function bindEvents() {
   document.addEventListener('keydown', (event) => {
     if (event.key !== 'Escape') return;
     if (closeParticipantMenu()) return;
+    if (mobileActions.isOpen) {
+      mobileActions.close();
+      return;
+    }
     closeMoreMenu();
     document.querySelector('[data-reaction-popover]').hidden = true;
     if (state.panel) closePanel();
