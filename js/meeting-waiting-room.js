@@ -12,6 +12,7 @@ import {
 import { protectPage, registerAuthExpiryCleanup } from './auth-guard.js';
 import { modal } from './ui/modal-manager.js';
 import { renderIcons, setIcon } from './ui/icons.js';
+import { validateMeetingDisplayName } from './display-name.js';
 
 const WAITING_STATES = Object.freeze({
   INITIALIZING: 'initializing',
@@ -88,26 +89,31 @@ function setText(selector, value) {
 
 function readStoredDisplayName() {
   try {
-    return sessionStorage.getItem('flashMeeting.displayName')?.trim() || 'Khách tham gia';
+    const storedParticipant = JSON.parse(sessionStorage.getItem('flashMeeting.joinedParticipant') || 'null');
+    const storedName = storedParticipant?.displayName || sessionStorage.getItem('flashMeeting.displayName') || '';
+    const validation = validateMeetingDisplayName(storedName);
+    return validation.valid ? validation.value : '';
   } catch {
-    return 'Khách tham gia';
+    return '';
   }
+}
+
+function redirectToJoin() {
+  const url = new URL(getPageUrl('join-meeting.html'), window.location.href);
+  if (state.roomCode) url.searchParams.set('room', state.roomCode);
+  window.location.replace(url.href);
 }
 
 function getRoomCode() {
   let storedRoomCode = '';
-  try { storedRoomCode = readStoredRoomCode(); } catch { /* Session storage is optional in mock mode. */ }
+  try { storedRoomCode = readStoredRoomCode(); } catch { /* Session storage is optional in restricted browser contexts. */ }
   const rawRoomCode = new URLSearchParams(window.location.search).get('room') || storedRoomCode;
   const roomCode = normalizeRoomCode(rawRoomCode);
   return isLikelyRoomCode(roomCode) ? roomCode : '';
 }
 
-function getMockScenario() {
-  return String(new URLSearchParams(window.location.search).get('mock') || '').toLowerCase();
-}
-
 function isOffline() {
-  return navigator.onLine === false || ['offline', 'network-error'].includes(getMockScenario());
+  return navigator.onLine === false;
 }
 
 function setPrejoinLink() {
@@ -270,7 +276,7 @@ function handleOffline() {
 }
 
 function handleOnline() {
-  if (state.status === WAITING_STATES.NETWORK_ERROR && getMockScenario() !== 'network-error') initialize();
+  if (state.status === WAITING_STATES.NETWORK_ERROR) initialize();
 }
 
 async function handleLeave() {
@@ -310,7 +316,7 @@ async function handleLeave() {
     sessionStorage.removeItem('flashMeeting.joinedMeeting');
     sessionStorage.removeItem('flashMeeting.joinedParticipant');
   } catch {
-    // Session storage is optional in mock mode.
+    // Session storage is optional in restricted browser contexts.
   }
   modal.success({ title: 'Đã rời phòng chờ', message: 'Yêu cầu tham gia đã được hủy.', autoCloseMs: 500 });
   window.setTimeout(() => { window.location.href = getPageUrl('join-meeting.html'); }, 560);
@@ -351,6 +357,10 @@ async function initialize() {
     return;
   }
   if (!result.success) {
+    if (result.code === JOIN_MEETING_ERROR_CODES.INVALID_DISPLAY_NAME) {
+      redirectToJoin();
+      return;
+    }
     setState(mapErrorToState(result.code));
     return;
   }
@@ -375,12 +385,6 @@ async function initialize() {
     return;
   }
 
-  if (getMockScenario() === 'reconnecting') {
-    setState(WAITING_STATES.RECONNECTING);
-    watchRequest(WAITING_STATES.RECONNECTING);
-    return;
-  }
-
   setState(WAITING_STATES.WAITING);
   watchRequest(WAITING_STATES.WAITING);
 }
@@ -391,7 +395,6 @@ window.addEventListener('offline', handleOffline);
 window.addEventListener('online', handleOnline);
 window.addEventListener('pagehide', clearWatcher, { once: true });
 
-// Production waiting requests use secure membership updates; mock scenarios keep the local watcher.
 registerAuthExpiryCleanup(() => {
   clearWatcher();
   clearJoinTimer();

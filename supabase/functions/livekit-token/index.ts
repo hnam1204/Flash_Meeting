@@ -20,14 +20,44 @@ function normalizeSessionId(value: unknown) {
   return String(value || '').trim();
 }
 
-function normalizeDisplayName(user: any, profile?: any) {
+function normalizeDisplayName(value: unknown) {
+  return String(value ?? '').trim().replace(/\s+/g, ' ');
+}
+
+function isValidDisplayName(value: unknown) {
+  const raw = String(value ?? '');
+  const normalized = normalizeDisplayName(value);
+  if (/[\u0000-\u001f\u007f-\u009f]/u.test(raw)) return false;
+  if (Array.from(normalized).length < 2 || Array.from(normalized).length > 50) return false;
+  return !new Set([
+    'anonymous',
+    'guest',
+    'gmail user',
+    'khách tham gia',
+    'member',
+    'một thành viên',
+    'participant',
+    'unknown',
+    'user'
+  ]).has(normalized.toLocaleLowerCase());
+}
+
+function resolveAccountDisplayName(user: any, profile?: any) {
   const metadata = user?.user_metadata || {};
-  const fallback = String(user?.email || '').split('@')[0] || 'Gmail user';
-  const value = String(profile?.display_name || metadata.full_name || metadata.name || fallback)
-    .trim()
-    .replace(/\s+/g, ' ')
-    .slice(0, 50);
-  return value || 'Gmail user';
+  const candidates = [
+    profile?.display_name,
+    metadata.full_name,
+    metadata.name,
+    String(user?.email || '').split('@')[0]
+  ];
+  return candidates.map(normalizeDisplayName).find(isValidDisplayName) || '';
+}
+
+function parseRpcPayload(value: unknown) {
+  if (typeof value === 'string') {
+    try { return JSON.parse(value); } catch { return null; }
+  }
+  return value;
 }
 
 function mapRpcError(error: any) {
@@ -39,6 +69,7 @@ function mapRpcError(error: any) {
   if (message.includes('MEETING_ENDED')) return { code: 'MEETING_ENDED', status: 409 };
   if (message.includes('MEETING_LOCKED')) return { code: 'MEETING_LOCKED', status: 409 };
   if (message.includes('ROOM_FULL')) return { code: 'ROOM_FULL', status: 409 };
+  if (message.includes('INVALID_DISPLAY_NAME')) return { code: 'INVALID_DISPLAY_NAME', status: 400 };
   if (message.includes('WAITING_ROOM')) return { code: 'WAITING_ROOM_REQUIRED', status: 409 };
   return { code: 'LIVEKIT_TOKEN_FAILED', status: 500 };
 }
@@ -89,14 +120,41 @@ Deno.serve(async (request) => {
     .eq('id', userData.user.id)
     .maybeSingle();
 
-  const { data: joinData, error: joinError } = await supabase.rpc('flash_meeting_join_meeting', {
+  const requestedDisplayName = normalizeDisplayName(body?.displayName);
+  const { data: currentParticipantData, error: currentParticipantError } = await supabase.rpc('flash_meeting_get_my_participant', {
     p_room_code: roomCode,
-    p_display_name: normalizeDisplayName(userData.user, profile),
     p_session_id: sessionId
   });
-  if (joinError) {
-    const mapped = mapRpcError(joinError);
+  if (currentParticipantError) {
+    const mapped = mapRpcError(currentParticipantError);
     return json({ errorCode: mapped.code }, mapped.status);
+  }
+
+  const currentParticipantPayload = parseRpcPayload(currentParticipantData) as any;
+  const currentParticipant = currentParticipantPayload?.participant;
+  if (currentParticipant?.status === 'waiting') {
+    return json({ errorCode: 'WAITING_ROOM_REQUIRED' }, 409);
+  }
+
+  let joinData: any = null;
+  if (currentParticipant?.status === 'admitted' && currentParticipantPayload?.meeting?.status === 'active') {
+    joinData = {
+      ...currentParticipantPayload,
+      destination: 'meeting'
+    };
+  } else {
+    const displayName = requestedDisplayName || resolveAccountDisplayName(userData.user, profile);
+    if (!isValidDisplayName(displayName)) return json({ errorCode: 'INVALID_DISPLAY_NAME' }, 400);
+    const { data, error } = await supabase.rpc('flash_meeting_join_meeting', {
+      p_room_code: roomCode,
+      p_display_name: displayName,
+      p_session_id: sessionId
+    });
+    if (error) {
+      const mapped = mapRpcError(error);
+      return json({ errorCode: mapped.code }, mapped.status);
+    }
+    joinData = parseRpcPayload(data);
   }
 
   const destination = String(joinData?.destination || '');
@@ -104,6 +162,10 @@ Deno.serve(async (request) => {
   const participant = joinData?.participant;
   if (destination !== 'meeting' || !meeting?.id || !participant?.id) {
     return json({ errorCode: 'WAITING_ROOM_REQUIRED' }, 409);
+  }
+  const participantDisplayName = normalizeDisplayName(participant.displayName || participant.display_name);
+  if (!isValidDisplayName(participantDisplayName)) {
+    return json({ errorCode: 'INVALID_DISPLAY_NAME' }, 400);
   }
 
   const roomName = `flash-meeting:${meeting.id}`;
@@ -117,7 +179,7 @@ Deno.serve(async (request) => {
   });
   const accessToken = new AccessToken(livekitApiKey, livekitApiSecret, {
     identity: participant.livekitIdentity,
-    name: participant.displayName,
+    name: participantDisplayName,
     metadata,
     ttl: '10m'
   });
@@ -136,6 +198,7 @@ Deno.serve(async (request) => {
     meetingId: meeting.id,
     participantId: participant.id,
     livekitIdentity: participant.livekitIdentity,
-    role: participant.role
+    role: participant.role,
+    displayName: participantDisplayName
   });
 });

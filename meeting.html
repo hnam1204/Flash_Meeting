@@ -18,10 +18,10 @@
             <span>FLASH <span class="brand-accent">MEETING</span></span>
           </a>
           <div class="room-meta">
-            <span class="meeting-title" data-meeting-title>Cuộc họp nhóm sản phẩm</span>
+            <span class="meeting-title" data-meeting-title>Đang tải cuộc họp…</span>
             <button class="room-code-button" type="button" data-copy-room aria-label="Sao chép mã phòng">
               <span>Mã phòng</span>
-              <strong data-room-code>ABC-123-XYZ</strong>
+              <strong data-room-code>—</strong>
               <i class="copy-glyph" data-lucide="copy" aria-hidden="true"></i>
             </button>
           </div>
@@ -66,6 +66,10 @@
             </div>
             <div class="stage-mode-status" data-stage-status>Chế độ người nói</div>
           </div>
+          <div class="meeting-idle-warning" data-idle-warning role="status" aria-live="polite" hidden>
+            <i data-lucide="clock-3" aria-hidden="true"></i>
+            <span data-idle-warning-text></span>
+          </div>
           <p class="share-support-note" data-share-support-note hidden role="status">Thiết bị hoặc trình duyệt này chưa hỗ trợ chia sẻ màn hình.</p>
 
           <div class="active-stage" data-stage-view="speaker">
@@ -100,17 +104,10 @@
             <div class="shared-screen-viewport">
               <video class="shared-screen-video" data-screen-share-video autoplay playsinline muted aria-label="Nội dung màn hình được chia sẻ" hidden></video>
               <video class="camera-pip" data-camera-pip autoplay playsinline muted aria-label="Camera của bạn khi chia sẻ màn hình" hidden></video>
-              <div class="remote-share-placeholder" data-remote-share-placeholder hidden aria-label="Nội dung đang được trình bày">
-                <div class="remote-window-bar"><span></span><span></span><span></span><strong data-remote-share-title>Đang trình bày</strong></div>
-                <div class="remote-window-body">
-                  <span class="remote-window-kicker">Nội dung cuộc họp</span>
-                  <strong data-remote-share-topic>Người trình bày đang chia sẻ màn hình</strong>
-                  <div class="remote-window-lines"><i></i><i></i><i></i></div>
-                </div>
-              </div>
               <div class="presentation-empty" data-presentation-empty hidden>
-                <i data-lucide="screen-share" aria-hidden="true"></i>
-                <strong>Chưa có nội dung chia sẻ</strong>
+                <i data-lucide="loader-circle" data-presentation-media-icon aria-hidden="true"></i>
+                <strong data-presentation-media-text>Đang tải màn hình được chia sẻ…</strong>
+                <button class="presentation-retry-button" type="button" data-presentation-retry hidden>Thử kết nối lại</button>
               </div>
             </div>
           </div>
@@ -176,7 +173,7 @@
 
           <section class="panel-content panel-content-info" data-panel-content="info" hidden>
             <div class="info-card"><span>Chủ đề</span><strong data-info-title>Cuộc họp nhóm sản phẩm</strong></div>
-            <div class="info-card"><span>Mã phòng</span><strong data-info-room>ABC-123-XYZ</strong></div>
+            <div class="info-card"><span>Mã phòng</span><strong data-info-room>—</strong></div>
             <div class="info-card"><span>Người tổ chức</span><strong data-info-host>Chủ phòng</strong></div>
             <div class="info-card"><span>Bắt đầu lúc</span><strong data-info-started>—</strong></div>
             <div class="info-card"><span>Sức chứa</span><strong data-info-capacity>—</strong></div>

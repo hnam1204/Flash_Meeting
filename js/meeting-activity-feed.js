@@ -1,3 +1,5 @@
+import { validateMeetingDisplayName } from './display-name.js';
+
 const MAX_VISIBLE_NOTICES = 3;
 const NOTICE_LIFETIME_MS = 4_200;
 const DEDUPE_WINDOW_MS = 3_000;
@@ -28,10 +30,12 @@ export function createMeetingActivityFeed({ element = document.querySelector('[d
       .forEach(removeNotice);
   }
 
-  function publish(type, { participantId = '', name = 'Một thành viên' } = {}) {
+  function publish(type, { participantId = '', name = '' } = {}) {
     const copy = NOTICE_COPY[type];
     if (!copy || !element) return;
-    const participantKey = String(participantId || name).trim() || 'participant';
+    const displayName = validateMeetingDisplayName(name);
+    if (!displayName.valid) return;
+    const participantKey = String(participantId).trim() || displayName.value;
     if (type === 'left' && removedParticipants.has(participantKey)) return;
     if (type === 'removed') {
       window.clearTimeout(removedParticipants.get(participantKey));
@@ -58,7 +62,7 @@ export function createMeetingActivityFeed({ element = document.querySelector('[d
     icon.textContent = copy.icon;
     const text = document.createElement('span');
     text.className = 'meeting-activity-copy';
-    text.textContent = copy.message(String(name).trim() || 'Một thành viên');
+    text.textContent = copy.message(displayName.value);
     node.append(icon, text);
     const notice = { node, type, participantKey, dedupeKey, createdAt: Date.now(), timer: 0 };
     notices.unshift(notice);

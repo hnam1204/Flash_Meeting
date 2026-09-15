@@ -29,16 +29,21 @@
         <form class="join-form" data-join-meeting-form novalidate aria-busy="true">
           <div class="join-field">
             <label for="room-code">Mã phòng</label>
-            <input id="room-code" name="roomCode" type="text" inputmode="text" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="120" placeholder="Ví dụ: ABC-123-XYZ" aria-describedby="room-code-hint room-code-error join-status" required />
+            <input id="room-code" name="roomCode" type="text" inputmode="text" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="120" placeholder="Nhập mã phòng" aria-describedby="room-code-hint room-code-error join-status" required />
             <p class="join-field-hint" id="room-code-hint">Bạn có thể nhập mã phòng hoặc dán liên kết cuộc họp.</p>
             <p class="join-field-error" data-field-error="roomCode" id="room-code-error" aria-live="polite"></p>
           </div>
 
           <div class="join-field">
-            <label for="display-name">Tên hiển thị <span>(tùy chọn)</span></label>
-            <input id="display-name" name="displayName" type="text" autocomplete="name" maxlength="50" placeholder="Ví dụ: Nguyễn Văn A" aria-describedby="display-name-hint display-name-error join-status" />
-            <p class="join-field-hint" id="display-name-hint">Nếu để trống, hệ thống sẽ dùng tên khách tham gia.</p>
+            <label for="display-name">Tên hiển thị <span aria-hidden="true">*</span></label>
+            <input id="display-name" name="displayName" type="text" autocomplete="name" maxlength="50" placeholder="Ví dụ: Nguyễn Văn A" aria-required="true" aria-describedby="display-name-hint display-name-error join-status" required />
+            <p class="join-field-hint" id="display-name-hint">Tên này sẽ hiển thị với mọi người trong cuộc họp.</p>
             <p class="join-field-error" data-field-error="displayName" id="display-name-error" aria-live="polite"></p>
+          </div>
+
+          <div class="join-account-row" data-account-row hidden>
+            <span class="join-account-label">Tài khoản</span>
+            <strong data-account-email></strong>
           </div>
 
           <button class="button button-primary join-submit" type="submit" data-join-submit>

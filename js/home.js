@@ -6,6 +6,7 @@ import { protectPage, redirectToLogin } from './auth-guard.js';
 import { modal } from './ui/modal-manager.js';
 import { createIcon, renderIcons } from './ui/icons.js';
 import { createAnalyticsController } from './app-analytics.js';
+import { isValidMeetingDisplayName } from './display-name.js';
 
 const page = document.body;
 const statusBar = document.querySelector('[data-dashboard-status]');
@@ -25,6 +26,7 @@ let logoutInFlight = false;
 let currentUser = null;
 let activeDurationTimer = 0;
 let meetingRefreshTimer = 0;
+let meetingRefreshInterval = 0;
 let meetingRefreshInFlight = false;
 let meetingRefreshQueued = false;
 let unsubscribeMeetingEvents = null;
@@ -33,10 +35,6 @@ renderIcons();
 
 function setDashboardState(state) {
   page.dataset.dashboardState = state;
-}
-
-function wait(duration) {
-  return new Promise((resolve) => window.setTimeout(resolve, duration));
 }
 
 function toTimestamp(value) {
@@ -123,6 +121,13 @@ function stopActiveDurationTimer() {
   activeDurationTimer = 0;
 }
 
+function startMeetingRefreshTimer() {
+  window.clearInterval(meetingRefreshInterval);
+  meetingRefreshInterval = window.setInterval(() => {
+    if (document.visibilityState === 'visible') void refreshActiveMeetings();
+  }, 60_000);
+}
+
 function focusAfterSectionHides(section) {
   if (!section?.contains(document.activeElement)) return;
   const fallback = instantCreateButtons.find((button) => !button.disabled) || profileTrigger;
@@ -134,17 +139,6 @@ function hideSection(section) {
   focusAfterSectionHides(section);
   section.hidden = true;
   setSectionState(section, 'hidden');
-}
-
-function isLocalDevelopment() {
-  return ['localhost', '127.0.0.1'].includes(window.location.hostname);
-}
-
-function getScenario() {
-  if (!isLocalDevelopment()) return 'normal';
-  const query = new URLSearchParams(window.location.search);
-  if (query.get('demo') === '1') return 'demo';
-  return String(query.get('mock') || 'normal').toLowerCase();
 }
 
 function showStatus(message, type = 'info', actionLabel = '', action) {
@@ -196,6 +190,14 @@ function setInstantCreateState(state) {
 
 async function handleInstantCreate() {
   if (instantCreateInFlight || !currentUser) return;
+  if (!isValidMeetingDisplayName(currentUser.displayName)) {
+    showStatus('Vui lòng nhập tên hiển thị hợp lệ trước khi bắt đầu cuộc họp.', 'error');
+    modal.error({
+      title: 'Cần có tên hiển thị',
+      message: 'Vui lòng nhập tên từ 2 đến 50 ký tự trước khi bắt đầu cuộc họp.'
+    });
+    return;
+  }
 
   instantCreateInFlight = true;
   clearStatus();
@@ -260,7 +262,7 @@ function renderAvatar(node, initials, avatarUrl) {
 }
 
 function renderProfile(user) {
-  const displayName = String(user?.displayName || 'Gmail user').trim();
+  const displayName = String(user?.displayName || 'Chưa có tên hiển thị').trim();
   const email = String(user?.email || '').trim();
   const parts = displayName.split(/\s+/).filter(Boolean);
   const initials = parts.map((part) => part[0]).slice(-2).join('').toUpperCase();
@@ -484,7 +486,7 @@ async function refreshActiveMeetings() {
 
   meetingRefreshInFlight = true;
   try {
-    const data = await dashboardService.load({ scenario: getScenario() });
+    const data = await dashboardService.load();
     renderActive(data.activeMeetings || []);
     renderHistory(data.meetingHistory || []);
   } catch {
@@ -514,7 +516,9 @@ function handleMeetingEvent(event) {
 function destroyDashboard() {
   stopActiveDurationTimer();
   window.clearTimeout(meetingRefreshTimer);
+  window.clearInterval(meetingRefreshInterval);
   meetingRefreshTimer = 0;
+  meetingRefreshInterval = 0;
   unsubscribeMeetingEvents?.();
   unsubscribeMeetingEvents = null;
   analyticsController.destroy();
@@ -582,9 +586,7 @@ function bindInteractions() {
 }
 
 async function initializeDashboard() {
-  const scenario = getScenario();
   setDashboardState('initializing');
-  await wait(320);
   const sessionResult = await protectPage();
   if (!sessionResult.success || !sessionResult.session) return;
   currentUser = sessionResult.user;
@@ -592,16 +594,12 @@ async function initializeDashboard() {
   setInstantCreateState('idle');
   renderProfile(sessionResult.user);
 
-  if (scenario === 'expired') {
-    showSessionExpired();
-    return;
-  }
-
   setDashboardState('loading');
   renderSkeletons();
   try {
-    const data = await dashboardService.load({ scenario });
+    const data = await dashboardService.load();
     renderDashboard(data);
+    startMeetingRefreshTimer();
   } catch {
     showDashboardError();
   }

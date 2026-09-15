@@ -86,6 +86,8 @@
 .create-status[data-state='success'], .join-status[data-state='success'] { color: var(--fm-success); }
 .join-field-error { min-height: 0; margin: 0; font-size: var(--fm-text-sm); line-height: 1.4; }
 .join-field-error:empty { display: none; }
+.join-account-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; border: 1px solid var(--fm-border); border-radius: var(--fm-radius-sm); color: var(--fm-text-secondary); background: var(--fm-bg-subtle); font-size: var(--fm-text-sm); }
+.join-account-row strong { overflow: hidden; color: var(--fm-text-primary); font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 
 .join-page { display: grid; min-height: 100dvh; place-items: center; padding: 32px 20px; overflow-x: hidden; color: var(--fm-text-primary); background: var(--fm-bg-page); }
 .join-shell { display: grid; width: min(100%, 480px); justify-items: center; gap: 20px; }

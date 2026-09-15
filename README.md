@@ -1,18 +1,19 @@
 # FLASH MEETING
 
-FLASH MEETING is a Vanilla JavaScript + Vite foundation for realtime meetings. The planned production architecture is GitHub Pages for the public frontend, Supabase for authentication/application data, and LiveKit for WebRTC media.
+FLASH MEETING is a Vanilla JavaScript + Vite realtime meeting application. The frontend is hosted on GitHub Pages, Supabase provides authentication and meeting data/realtime RPCs, and LiveKit provides WebRTC media transport.
 
 ## Current scope
 
-This repository currently contains Phase 1 only:
+The current repository includes the following production paths and foundations:
 
 - Multi-page Vite app with responsive HTML/CSS/ES module entry points.
-- Public runtime configuration and Supabase/LiveKit client foundations.
-- Page-level meeting flow placeholders: create, join, prejoin, waiting room, meeting, and ended states.
-- Supabase migration/function scaffolds with explicit server-authority boundaries.
+- Google OAuth authentication with a six-hour local session policy and protected routes.
+- Supabase-backed account profiles, meeting lifecycle, analytics, realtime participant/chat state, and RLS migrations.
+- LiveKit token requests, camera/microphone media, participant presence, and screen-share integration.
+- Page-level meeting flow: create, join, prejoin, optional waiting room, meeting, and ended states.
 - GitHub Pages workflow using the repository name as the default project-site base path.
 
-Production authentication, database schema, RLS, LiveKit token generation, realtime events, chat, moderation, and security hardening are intentionally reserved for later phases.
+Some server-authority operations remain explicit failure/scaffold boundaries until their corresponding Supabase RPC or Edge Function is deployed. The browser never fabricates meeting, participant, chat, or media state when a backend service is unavailable.
 
 ## Requirements
 
@@ -40,11 +41,11 @@ The production output is written to `dist/`.
 ## Project structure
 
 ```text
-index.html and page entry points  Static multi-page UI
+index.html and page entry points  Static multi-page UI and meeting routes
 css/                              Shared and page-specific styles
-js/                               Page modules and integration foundations
-supabase/migrations/              Ordered database/RLS/security placeholders
-supabase/functions/               Server-authority function placeholders
+js/                               Page modules and Supabase/LiveKit integrations
+supabase/migrations/              Ordered database, RLS, analytics, and realtime history
+supabase/functions/               Server-authority Edge Functions and retained scaffolds
 .github/workflows/                GitHub Pages deployment
 ```
 

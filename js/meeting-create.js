@@ -25,7 +25,6 @@ const banner = document.querySelector('[data-create-banner]');
 const submitButton = document.querySelector('[data-create-submit]');
 const submitLabel = document.querySelector('[data-create-submit-label]');
 const profileAvatar = document.querySelector('[data-create-profile-avatar]');
-const scenario = new URLSearchParams(window.location.search).get('mock')?.toLowerCase() ?? '';
 
 renderIcons();
 
@@ -71,13 +70,14 @@ function setOfflineState(isOffline) {
   }
 }
 
-function isOfflineScenario() {
-  return scenario === 'offline' || !navigator.onLine;
+function isOffline() {
+  return navigator.onLine === false;
 }
 
 function getErrorMessage(code) {
   const messages = {
     [CREATE_MEETING_ERROR_CODES.AUTH_REQUIRED]: 'Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.',
+    [CREATE_MEETING_ERROR_CODES.INVALID_DISPLAY_NAME]: 'Vui lòng nhập tên hiển thị hợp lệ trước khi tạo cuộc họp.',
     [CREATE_MEETING_ERROR_CODES.INVALID_TITLE]: `Tiêu đề không được chỉ chứa khoảng trắng và không quá ${MEETING_TITLE_MAX_LENGTH} ký tự.`,
     [CREATE_MEETING_ERROR_CODES.RATE_LIMITED]: 'Bạn đang tạo cuộc họp quá nhanh. Vui lòng thử lại sau.',
     [CREATE_MEETING_ERROR_CODES.NETWORK_ERROR]: 'Không có kết nối Internet. Vui lòng thử lại khi mạng ổn định.',
@@ -93,7 +93,7 @@ function showError(code) {
   submitLabel.textContent = 'Tạo cuộc họp';
   form.setAttribute('aria-busy', 'false');
   setStatusMessage(getErrorMessage(code), 'error');
-  if (code === CREATE_MEETING_ERROR_CODES.NETWORK_ERROR && isOfflineScenario()) setOfflineState(true);
+  if (code === CREATE_MEETING_ERROR_CODES.NETWORK_ERROR && isOffline()) setOfflineState(true);
 
   window.setTimeout(() => {
     if (page.dataset.createState === CREATE_STATES.ERROR) setCreateState(CREATE_STATES.READY);
@@ -139,7 +139,7 @@ async function initializeCreatePage() {
   setFormDisabled(false);
   form.setAttribute('aria-busy', 'false');
   setCreateState(CREATE_STATES.READY);
-  setOfflineState(isOfflineScenario());
+  setOfflineState(isOffline());
 }
 
 async function handleSubmit(event) {
@@ -192,14 +192,14 @@ form?.querySelectorAll('input, select').forEach((control) => {
     if (page.dataset.createState === CREATE_STATES.ERROR) {
       setCreateState(CREATE_STATES.READY);
       setStatusMessage('');
-      setOfflineState(isOfflineScenario());
+      setOfflineState(isOffline());
     }
   });
   control.addEventListener('change', () => {
     if (page.dataset.createState === CREATE_STATES.ERROR) {
       setCreateState(CREATE_STATES.READY);
       setStatusMessage('');
-      setOfflineState(isOfflineScenario());
+      setOfflineState(isOffline());
     }
   });
 });

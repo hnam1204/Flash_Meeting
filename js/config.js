@@ -17,10 +17,10 @@ export const configState = Object.freeze({
 
 export function getConfigSummary() {
   if (configState.hasSupabase && configState.hasLiveKit) {
-    return 'Public configuration is ready. Server authorization is still required before realtime rooms are enabled.';
+    return 'Public configuration is ready. Server authorization remains enforced for realtime rooms.';
   }
 
-  return 'Foundation mode: add public Supabase and LiveKit values to .env.local before enabling realtime rooms.';
+  return 'Add public Supabase and LiveKit values to .env.local before using connected meeting features.';
 }
 
 if (typeof document !== 'undefined') {

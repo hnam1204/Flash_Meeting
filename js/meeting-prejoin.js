@@ -16,6 +16,11 @@ import { getMediaPreferences, saveMediaPreferences } from './meeting-media.js';
 import { protectPage, registerAuthExpiryCleanup } from './auth-guard.js';
 import { modal } from './ui/modal-manager.js';
 import { renderIcons, setIcon } from './ui/icons.js';
+import {
+  DISPLAY_NAME_MAX_LENGTH,
+  DISPLAY_NAME_MIN_LENGTH,
+  validateMeetingDisplayName
+} from './display-name.js';
 
 const PREJOIN_STATES = Object.freeze({
   INITIALIZING: 'initializing',
@@ -35,8 +40,6 @@ const MEDIA_STATUS = Object.freeze({
   NO_DEVICE: 'no-device'
 });
 
-const DISPLAY_NAME_MIN_LENGTH = 2;
-const DISPLAY_NAME_MAX_LENGTH = 50;
 const REDIRECT_DELAY = 420;
 
 const page = document.body;
@@ -116,16 +119,30 @@ function applyStoredMediaPreferences() {
 }
 
 function isOffline() {
-  const scenario = new URLSearchParams(window.location.search).get('mock')?.toLowerCase();
-  return scenario === 'offline' || navigator.onLine === false;
+  return navigator.onLine === false;
 }
 
 function getStoredDisplayName() {
-  const storedName = sessionStorage.getItem('flashMeeting.displayName')?.trim();
-  if (storedName) return storedName;
+  let storedParticipant = null;
+  let storedName = '';
+  try {
+    storedName = sessionStorage.getItem('flashMeeting.displayName') || '';
+    storedParticipant = JSON.parse(sessionStorage.getItem('flashMeeting.joinedParticipant') || 'null');
+  } catch {
+    // Session storage is optional in restricted browser contexts.
+  }
 
-  const sessionName = authService.getSession()?.displayName?.trim();
-  return sessionName || 'Khách tham gia';
+  for (const candidate of [storedParticipant?.displayName, storedName, authService.getSession()?.displayName]) {
+    const validation = validateMeetingDisplayName(candidate);
+    if (validation.valid) return validation.value;
+  }
+  return '';
+}
+
+function redirectToJoin() {
+  const url = new URL(getPageUrl('join-meeting.html'), window.location.href);
+  if (state.roomCode) url.searchParams.set('room', state.roomCode);
+  window.location.replace(url.href);
 }
 
 function getRoomCodeFromUrl() {
@@ -191,8 +208,7 @@ function updateControlAvailability() {
 }
 
 function setPreviewName(name) {
-  const safeName = String(name ?? '').trim() || 'Khách tham gia';
-  previewName.textContent = safeName;
+  previewName.textContent = String(name ?? '').trim() || 'Chưa có tên hiển thị';
 }
 
 function updatePreview() {
@@ -389,6 +405,7 @@ async function refreshDevices() {
 
 function getErrorMessage(code) {
   const messages = {
+    [JOIN_MEETING_ERROR_CODES.INVALID_DISPLAY_NAME]: 'Tên hiển thị không hợp lệ. Vui lòng nhập tên từ 2 đến 50 ký tự.',
     [JOIN_MEETING_ERROR_CODES.INVALID_ROOM_CODE]: 'Mã phòng không hợp lệ.',
     [JOIN_MEETING_ERROR_CODES.MEETING_NOT_FOUND]: 'Không tìm thấy cuộc họp với mã phòng này.',
     [JOIN_MEETING_ERROR_CODES.MEETING_ENDED]: 'Cuộc họp đã kết thúc.',
@@ -452,31 +469,25 @@ function showOfflineState() {
 }
 
 function validateDisplayName() {
-  const rawName = String(displayNameInput.value ?? '');
-  const displayName = rawName.trim();
   const error = form.querySelector('[data-field-error="displayName"]');
   error.textContent = '';
   displayNameInput.removeAttribute('aria-invalid');
 
-  if (rawName.length > 0 && !displayName) {
-    error.textContent = 'Tên hiển thị không hợp lệ.';
-    displayNameInput.setAttribute('aria-invalid', 'true');
-    displayNameInput.focus();
-    return null;
-  }
-  if (!displayName) {
-    displayNameInput.value = 'Khách tham gia';
-    setPreviewName(displayNameInput.value);
-    return displayNameInput.value;
-  }
-  if (displayName.length < DISPLAY_NAME_MIN_LENGTH || displayName.length > DISPLAY_NAME_MAX_LENGTH) {
-    error.textContent = `Tên hiển thị phải có từ ${DISPLAY_NAME_MIN_LENGTH} đến ${DISPLAY_NAME_MAX_LENGTH} ký tự.`;
+  const validation = validateMeetingDisplayName(displayNameInput.value);
+  if (!validation.valid) {
+    error.textContent = validation.code === 'EMPTY'
+      ? 'Vui lòng nhập tên hiển thị.'
+      : validation.code === 'LENGTH'
+        ? `Tên hiển thị phải có từ ${DISPLAY_NAME_MIN_LENGTH} đến ${DISPLAY_NAME_MAX_LENGTH} ký tự.`
+        : 'Tên hiển thị không hợp lệ. Vui lòng nhập tên từ 2 đến 50 ký tự.';
     displayNameInput.setAttribute('aria-invalid', 'true');
     displayNameInput.focus();
     return null;
   }
 
-  return displayName;
+  displayNameInput.value = validation.value;
+  setPreviewName(validation.value);
+  return validation.value;
 }
 
 function cleanupMedia() {
@@ -568,7 +579,12 @@ async function loadMeeting() {
     return false;
   }
 
-  displayNameInput.value = getStoredDisplayName();
+  const storedDisplayName = getStoredDisplayName();
+  if (!storedDisplayName) {
+    redirectToJoin();
+    return false;
+  }
+  displayNameInput.value = storedDisplayName;
   let result;
   try {
     result = await meetingService.resolveForJoin({
@@ -617,7 +633,7 @@ async function handleSubmit(event) {
   let result;
   try {
     result = isHost
-      ? await meetingService.startMeeting({ roomCode: state.roomCode })
+      ? await meetingService.startMeeting({ roomCode: state.roomCode, displayName })
       : await meetingService.resolveForJoin({
         roomCode: state.roomCode,
         displayName,
@@ -627,7 +643,8 @@ async function handleSubmit(event) {
     result = { success: false, code: isHost ? START_MEETING_ERROR_CODES.START_MEETING_FAILED : JOIN_MEETING_ERROR_CODES.JOIN_FAILED };
   }
   if (!result.success) {
-    if (isHost && Object.values(START_MEETING_ERROR_CODES).includes(result.code)) {
+    if (isHost && result.code !== START_MEETING_ERROR_CODES.INVALID_DISPLAY_NAME
+      && Object.values(START_MEETING_ERROR_CODES).includes(result.code)) {
       showStartError();
     } else {
       setFormDisabled(false);
@@ -639,6 +656,13 @@ async function handleSubmit(event) {
   state.meeting = result.meeting;
   state.participantContext = result.participantContext
     || meetingService.getCurrentParticipantContext(state.roomCode, result.meeting);
+  const participantValidation = validateMeetingDisplayName(result.participant?.displayName);
+  if (!participantValidation.valid) {
+    setFormDisabled(false);
+    showMeetingError(JOIN_MEETING_ERROR_CODES.INVALID_DISPLAY_NAME, { canRetry: true });
+    return;
+  }
+  result.participant.displayName = participantValidation.value;
   setPrejoinState(PREJOIN_STATES.SUCCESS);
   setStatusMessage(isHost ? 'Cuộc họp đã bắt đầu. Đang mở phòng…' : 'Đã sẵn sàng. Đang mở cuộc họp…', 'success');
   sessionStorage.setItem('flashMeeting.roomCode', result.meeting.roomCode);
@@ -676,7 +700,7 @@ function bindEvents() {
 async function initialize() {
   bindEvents();
   setFormDisabled(true);
-  setPreviewName('Khách tham gia');
+  setPreviewName('');
   setPrejoinState(PREJOIN_STATES.INITIALIZING);
   const sessionResult = await protectPage();
   if (!sessionResult.success || !sessionResult.session) return;

@@ -25,16 +25,16 @@ import {
   isScreenShareSupported,
   isScreenShareHealthy,
   SCREEN_SHARE_STATES,
-  startMockRemoteShare,
   startScreenShare,
   stopScreenShare,
-  stopMockRemoteShare,
   subscribeScreenShare
 } from './meeting-screen-share.js';
 import { authService } from './auth-service.js';
 import {
   END_MEETING_ERROR_CODES,
   MAX_MEETING_PARTICIPANTS,
+  MEETING_IDLE_TIMEOUT_MS,
+  MEETING_IDLE_WARNING_MS,
   MEETING_STATUSES,
   meetingService,
   subscribeMeetingEvents
@@ -56,9 +56,15 @@ import { createIcon, renderIcons, setIcon } from './ui/icons.js';
 import { createParticipantGridController } from './meeting-participant-grid.js';
 import { createMobileActionsController } from './meeting-mobile-actions.js';
 import { createMeetingActivityFeed } from './meeting-activity-feed.js';
+import { isValidMeetingDisplayName, validateMeetingDisplayName } from './display-name.js';
+import {
+  hasScreenShareMedia,
+  isLiveScreenShareTrack,
+  normalizeTrackSource,
+  SCREEN_SHARE_MEDIA_STATES
+} from './meeting-screen-share-state.js';
 
 const MAX_PARTICIPANTS = MAX_MEETING_PARTICIPANTS;
-const DEFAULT_DURATION_SECONDS = (24 * 60) + 17;
 const MEDIA_STATUS = Object.freeze({
   IDLE: 'IDLE',
   REQUESTING: 'REQUESTING',
@@ -71,20 +77,6 @@ const MEDIA_STATUS = Object.freeze({
 });
 const ALLOWED_REACTIONS = new Set(['👍', '❤️', '😂', '🎉', '👏', '😮']);
 
-const names = [
-  'Minh Anh', 'Quang Huy', 'Lan Chi', 'Đức Minh', 'Hà My', 'Bảo Ngọc', 'Tuấn Khang',
-  'Phương Linh', 'Hoàng Nam', 'Thùy Dương', 'Gia Bảo', 'Khánh Vy', 'Trung Kiên',
-  'Mai Phương', 'Thanh Tùng', 'Ngọc Hân', 'Anh Duy', 'Thảo Nhi', 'Việt Anh',
-  'Yến Nhi', 'Mạnh Hùng', 'Thu Trang', 'Đăng Khoa', 'Hải Yến', 'Thanh Hà',
-  'Đình Phúc', 'Nhật Minh', 'Kim Anh', 'Thiên Long', 'Hương Giang', 'Vũ Hoàng',
-  'Ngọc Mai', 'Trí Dũng', 'Mai Anh', 'Hoài Nam', 'Khôi Nguyên', 'Thành Đạt',
-  'Linh Đan', 'Đức Anh', 'Phúc An', 'Quỳnh Anh', 'Minh Khoa', 'Thái Sơn',
-  'Huyền Trang', 'Tấn Phát', 'Thanh Vy', 'Hoàng Long', 'Bích Ngọc', 'Đông Quân'
-];
-
-const query = new URLSearchParams(window.location.search);
-const scenario = String(query.get('mock') ?? '').toLowerCase();
-const isDemoMode = query.get('demo') === '1' || Boolean(scenario);
 let meetingContext = meetingService.getCurrentParticipantContext(getRoomCode());
 let role = meetingContext.role || PARTICIPANT_ROLES.MEMBER;
 const mediaPreferences = getMediaPreferences();
@@ -99,7 +91,6 @@ const gridTiles = document.querySelector('[data-grid-tiles]');
 const stage = document.querySelector('[data-stage-view="speaker"]');
 const presentationStage = document.querySelector('[data-presentation-stage]');
 const presentationVideo = document.querySelector('[data-screen-share-video]');
-const remoteSharePlaceholder = document.querySelector('[data-remote-share-placeholder]');
 const presentationEmpty = document.querySelector('[data-presentation-empty]');
 const stageModeStatus = document.querySelector('[data-stage-status]');
 const presentationStatusIcon = document.querySelector('[data-presentation-status-icon]');
@@ -107,8 +98,11 @@ const state = {
   roomCode: getRoomCode(),
   meetingTitle: getMeetingTitle(),
   displayName: getStoredDisplayName(),
-  hostName: meetingContext.meeting?.hostName || 'Chủ phòng',
+  hostName: meetingContext.meeting?.hostName || '',
   startedAt: getStartedAt(),
+  meetingStatus: meetingContext.meeting?.status || MEETING_STATUSES.ACTIVE,
+  endedReason: meetingContext.meeting?.endedReason || null,
+  hasHadAttendee: meetingContext.meeting?.hasHadAttendee === true,
   role,
   panel: null,
   participantTab: PARTICIPANT_TABS.JOINED,
@@ -118,16 +112,15 @@ const state = {
   userSelectedView: false,
   filmstripPage: 0,
   activeParticipantId: 'local',
-  messages: isDemoMode ? [
-    { author: 'Minh Anh', content: 'Mọi người nghe rõ không?' },
-    { author: 'Quang Huy', content: 'Mình nghe rõ, bắt đầu nhé.' },
-    { author: 'Lan Chi', content: 'Mình đã mở tài liệu rồi.' }
-  ] : [],
-  unreadCount: scenario === 'chat-unread' ? 3 : 0,
+  messages: [],
+  unreadCount: 0,
   toastTimer: 0,
   timer: 0,
-  speakerTimer: 0,
-  reconnectTimer: 0,
+  presentationPlaybackTimer: 0,
+  presentationPlaybackTrack: null,
+  presentationPlaybackWatch: null,
+  screenShareOperation: 0,
+  debugMedia: import.meta.env.DEV,
   moderationActionInFlight: false,
   recordingActionInFlight: false,
   leaveActionInFlight: false,
@@ -161,11 +154,22 @@ const state = {
   screenShare: {
     active: false,
     presenterId: null,
+    presenterIdentity: null,
+    presenterName: '',
+    announced: false,
+    publicationAvailable: false,
+    subscribed: false,
+    mediaLive: false,
     isLocalPresenter: false,
     stream: null,
     track: null,
     settings: null,
-    status: SCREEN_SHARE_STATES.IDLE
+    status: SCREEN_SHARE_MEDIA_STATES.IDLE,
+    startedAt: 0,
+    lastMediaAt: 0,
+    error: '',
+    lastEndedPresenterId: null,
+    lastEndedPresenterIdentity: null
   },
   localMedia: {
     cameraEnabled: mediaPreferences.cameraEnabled,
@@ -274,17 +278,17 @@ function writeSession(key, value) {
   try {
     sessionStorage.setItem(key, value);
   } catch {
-    // Session storage is optional in mock mode.
+    // Session storage is optional in restricted browser contexts.
   }
 }
 
 function getRoomCode() {
   const queryCode = new URLSearchParams(window.location.search).get('room');
-  return String(queryCode || readSession('flashMeeting.roomCode') || 'ABC-123-XYZ').trim().toUpperCase();
+  return String(queryCode || readSession('flashMeeting.roomCode') || '').trim().toUpperCase();
 }
 
 function getMeetingTitle() {
-  return getStoredJoinedMeeting()?.title || 'Cuộc họp nhóm sản phẩm';
+  return getStoredJoinedMeeting()?.title || '';
 }
 
 function getStoredJoinedMeeting() {
@@ -297,7 +301,19 @@ function getStoredJoinedMeeting() {
 }
 
 function getStoredDisplayName() {
-  return authService.getSession()?.displayName?.trim() || readSession('flashMeeting.displayName').trim() || 'Khách tham gia';
+  let storedParticipant = null;
+  try { storedParticipant = JSON.parse(readSession('flashMeeting.joinedParticipant') || 'null'); } catch { storedParticipant = null; }
+  for (const candidate of [storedParticipant?.displayName, readSession('flashMeeting.displayName'), authService.getSession()?.displayName]) {
+    const validation = validateMeetingDisplayName(candidate);
+    if (validation.valid) return validation.value;
+  }
+  return '';
+}
+
+function redirectToJoin() {
+  const url = new URL(getPageUrl('join-meeting.html'), window.location.href);
+  if (state.roomCode) url.searchParams.set('room', state.roomCode);
+  window.location.replace(url.href);
 }
 
 function getStartedAt() {
@@ -319,33 +335,7 @@ function getStartedAt() {
   const contextStartedAt = toTimestamp(meetingContext.meeting?.startedAt);
   if (Number.isFinite(storedMeetingStartedAt) && storedMeetingStartedAt > 0) return storedMeetingStartedAt;
   if (Number.isFinite(contextStartedAt) && contextStartedAt > 0) return contextStartedAt;
-  if (!isDemoMode) return 0;
-
-  const mockStartedAt = Date.now() - (DEFAULT_DURATION_SECONDS * 1000);
-  writeSession('flashMeeting.startedAt', String(mockStartedAt));
-  return mockStartedAt;
-}
-
-function getParticipantCount() {
-  if (scenario === 'only-local') return 1;
-  if (scenario === 'many-participants' || scenario === 'room-full' || scenario === 'full') return MAX_PARTICIPANTS;
-  const countMatch = scenario.match(/^(?:participants?|users?)[-_]?(\d+)$|^(\d+)[-_]?(?:participants?|users?)$/);
-  if (countMatch) return Math.max(1, Math.min(MAX_PARTICIPANTS, Number(countMatch[1] || countMatch[2])));
-  return isDemoMode ? 24 : 1;
-}
-
-function isRemoteShareScenario() {
-  return ['remote-presenting', 'remote-share', 'presentation'].includes(scenario);
-}
-
-function createWaitingParticipants() {
-  const shouldShowWaiting = ['waiting-users', 'waiting-room', 'host', 'cohost'].includes(scenario) || scenario === 'room-full';
-  if (!shouldShowWaiting || scenario === 'no-waiting-users') return [];
-  return [
-    { id: 'waiting-1', name: 'Nguyễn Thu Hà', status: 'waiting' },
-    { id: 'waiting-2', name: 'Phạm Đức Long', status: 'waiting' },
-    { id: 'waiting-3', name: 'Lê Minh Trang', status: 'waiting' }
-  ];
+  return 0;
 }
 
 function getInitials(name) {
@@ -356,37 +346,20 @@ function getInitials(name) {
 }
 
 function createParticipants() {
-  const count = isDemoMode ? getParticipantCount() : 1;
   let storedParticipant = null;
   try { storedParticipant = JSON.parse(readSession('flashMeeting.joinedParticipant') || 'null'); } catch { storedParticipant = null; }
-  const localCameraEnabled = isDemoMode ? scenario !== 'camera-off' : state.localMedia.cameraPreference;
-  const localMicrophoneEnabled = isDemoMode ? scenario !== 'mic-off' : state.localMedia.microphonePreference;
   const local = {
     id: storedParticipant?.id || 'local',
     name: state.displayName,
     role: state.role,
     local: true,
-    cameraEnabled: localCameraEnabled,
-    microphoneEnabled: localMicrophoneEnabled,
+    cameraEnabled: state.localMedia.cameraPreference,
+    microphoneEnabled: state.localMedia.microphonePreference,
     speaking: false,
     handRaised: false,
     shareScreenAllowed: true
   };
-  const participants = [local];
-  for (let index = 1; index < count; index += 1) {
-    participants.push({
-      id: `participant-${index}`,
-      name: names[index - 1] || `Thành viên ${index}`,
-      role: index === 1 ? 'co-host' : 'member',
-      local: false,
-      cameraEnabled: scenario !== 'camera-off' && !(index % 11 === 0),
-      microphoneEnabled: scenario !== 'mic-off' && index % 7 !== 0,
-      speaking: index === 1,
-      handRaised: index === 4,
-      shareScreenAllowed: true
-    });
-  }
-  return createParticipantStore(participants);
+  return createParticipantStore([local]);
 }
 
 function getParticipants() {
@@ -401,10 +374,42 @@ function findParticipant(id) {
   return getParticipants().find((participant) => participant.id === id) || getLocalParticipant();
 }
 
+function findParticipantExact(id) {
+  if (!id) return null;
+  return getParticipants().find((participant) => participant.id === id)
+    || state.waitingParticipants.find((participant) => participant.id === id)
+    || null;
+}
+
+function getScreenSharePresenter() {
+  return findParticipantExact(state.screenShare.presenterId)
+    || findParticipantByLiveKitIdentity(state.screenShare.presenterIdentity)
+    || null;
+}
+
+function getScreenSharePresenterName() {
+  return getScreenSharePresenter()?.name || state.screenShare.presenterName || 'Màn hình đang được chia sẻ';
+}
+
 function setText(selector, value) {
   const element = document.querySelector(selector);
   if (element) element.textContent = String(value ?? '');
   return element;
+}
+
+function debugScreenShare(event, details = {}) {
+  if (!state.debugMedia) return;
+  const share = state.screenShare;
+  console.debug('[FLASH MEDIA]', event, {
+    participantId: details.participantId ?? share.presenterId ?? null,
+    participantIdentity: details.participantIdentity ?? share.presenterIdentity ?? null,
+    trackSid: details.trackSid ?? share.track?.sid ?? null,
+    source: details.source ?? 'screen_share',
+    status: share.status,
+    mediaLive: share.mediaLive,
+    videoWidth: presentationVideo?.videoWidth || 0,
+    videoHeight: presentationVideo?.videoHeight || 0
+  });
 }
 
 function handleRecordingState(nextState) {
@@ -498,7 +503,42 @@ function formatDuration(totalSeconds) {
 function updateDuration() {
   const elapsedSeconds = state.startedAt > 0 ? (Date.now() - state.startedAt) / 1000 : 0;
   setText('[data-meeting-duration]', formatDuration(elapsedSeconds));
+  updateIdleWarning();
   updateRecordingUi();
+}
+
+function updateIdleWarning() {
+  const warning = document.querySelector('[data-idle-warning]');
+  const copy = document.querySelector('[data-idle-warning-text]');
+  if (!warning || !copy) return;
+
+  const warningEligible = state.role === PARTICIPANT_ROLES.HOST
+    && state.meetingStatus === MEETING_STATUSES.ACTIVE
+    && state.startedAt > 0
+    && !state.hasHadAttendee;
+  if (!warningEligible) {
+    warning.hidden = true;
+    return;
+  }
+
+  const remainingMs = (state.startedAt + MEETING_IDLE_TIMEOUT_MS) - Date.now();
+  if (remainingMs <= 0) {
+    copy.textContent = 'Đang chờ hệ thống xác nhận trạng thái cuộc họp…';
+  } else if (remainingMs <= MEETING_IDLE_TIMEOUT_MS - MEETING_IDLE_WARNING_MS) {
+    copy.textContent = `Chưa có thành viên tham gia. Cuộc họp sẽ tự động kết thúc sau ${formatDuration(remainingMs / 1000)}.`;
+  } else {
+    warning.hidden = true;
+    return;
+  }
+  warning.hidden = false;
+}
+
+function noteAttendeeHistory(participant) {
+  if (participant?.role === PARTICIPANT_ROLES.HOST || !participant?.joinedAt) return;
+  if (!state.hasHadAttendee) {
+    state.hasHadAttendee = true;
+    updateIdleWarning();
+  }
 }
 
 function isMeetingTransitioning() {
@@ -565,7 +605,7 @@ function renderFilmstrip() {
   );
   document.querySelector('.filmstrip-wrap')?.classList.toggle(
     'is-single-page',
-    mode !== 'grid' && result.participants.length <= 1
+    mode === 'speaker' && result.participants.length <= 1
   );
 }
 
@@ -786,13 +826,6 @@ function toggleParticipantMenu(participantId) {
   renderParticipantsPanel();
 }
 
-function shouldFailModeration(action) {
-  return scenario === 'network-error'
-    || (scenario === 'promote-error' && [HOST_ACTIONS.PROMOTE, HOST_ACTIONS.DEMOTE].includes(action))
-    || (scenario === 'remove-error' && action === HOST_ACTIONS.REMOVE)
-    || (scenario === 'mute-all-error' && action === 'muteAll');
-}
-
 function getModerationCopy(action, target) {
   if (action === HOST_ACTIONS.PROMOTE && target) {
     return {
@@ -900,74 +933,29 @@ async function applyModerationAction(action, targetId, { showFeedback = true } =
     if (showFeedback) showToast(message);
     return { success: false, message };
   }
-  if (shouldFailModeration(action)) {
-    const message = getHostActionFailureMessage(action);
-    if (showFeedback) showToast(message);
-    return { success: false, message };
-  }
-
-  if (!isDemoMode) {
-    if (action === 'muteAll') {
-      const results = await Promise.all(getParticipants()
-        .filter((participant) => !participant.local && participant.microphoneEnabled)
-        .map((participant) => meetingService.moderateMeetingParticipant({
-          meetingId: state.meetingId,
-          participantId: participant.id,
-          action: HOST_ACTIONS.MUTE
-        })));
-      const failed = results.find((result) => !result.success);
-      if (failed) return { success: false, message: 'Không thể tắt micro của thành viên.' };
-      if (showFeedback) showToast('Đã tắt micro của người tham gia.');
-      return { success: true };
-    }
-    if (!target) return { success: false, message: 'Không tìm thấy thành viên.' };
-    const backendAction = action === HOST_ACTIONS.SHARE_PERMISSION ? HOST_ACTIONS.SHARE_PERMISSION : action;
-    const result = await meetingService.moderateMeetingParticipant({
-      meetingId: state.meetingId,
-      participantId: target.id,
-      action: backendAction,
-      value: action === HOST_ACTIONS.SHARE_PERMISSION ? !target.shareScreenAllowed : null
-    });
-    if (!result.success) return { success: false, message: getHostActionFailureMessage(action) };
-    if (result.participant) mergeRealtimeParticipant(result.participant);
-    if (showFeedback) showToast(`${target.name} đã được cập nhật.`);
+  if (action === 'muteAll') {
+    const results = await Promise.all(getParticipants()
+      .filter((participant) => !participant.local && participant.microphoneEnabled)
+      .map((participant) => meetingService.moderateMeetingParticipant({
+        meetingId: state.meetingId,
+        participantId: participant.id,
+        action: HOST_ACTIONS.MUTE
+      })));
+    const failed = results.find((result) => !result.success);
+    if (failed) return { success: false, message: 'Không thể tắt micro của thành viên.' };
+    if (showFeedback) showToast('Đã tắt micro của người tham gia.');
     return { success: true };
   }
-
-  if (action === HOST_ACTIONS.MUTE && target) {
-    state.participants.update(target.id, { microphoneEnabled: false });
-    if (showFeedback) showToast(`Đã tắt micro của ${target.name}.`);
-  }
-  if (action === HOST_ACTIONS.STOP_CAMERA && target) {
-    state.participants.update(target.id, { cameraEnabled: false });
-    if (showFeedback) showToast(`Đã tắt camera của ${target.name}.`);
-  }
-  if (action === HOST_ACTIONS.SHARE_PERMISSION && target) {
-    const allowed = !target.shareScreenAllowed;
-    state.participants.update(target.id, { shareScreenAllowed: allowed });
-    if (showFeedback) showToast(allowed ? `Đã cho phép ${target.name} chia sẻ màn hình.` : `Đã tắt quyền chia sẻ màn hình của ${target.name}.`);
-  }
-  if (action === HOST_ACTIONS.PROMOTE && target) {
-    state.participants.update(target.id, { role: PARTICIPANT_ROLES.CO_HOST });
-    if (showFeedback) showToast(`${target.name} hiện là đồng chủ trì.`);
-  }
-  if (action === HOST_ACTIONS.DEMOTE && target) {
-    state.participants.update(target.id, { role: PARTICIPANT_ROLES.MEMBER });
-    if (showFeedback) showToast(`${target.name} đã trở về vai trò thành viên.`);
-  }
-  if (action === HOST_ACTIONS.REMOVE && target) {
-    state.participants.remove(target.id);
-    if (state.activeParticipantId === target.id) state.activeParticipantId = getLocalParticipant().id;
-    if (state.screenShare.presenterId === target.id) stopMockRemoteShare();
-    if (showFeedback) showToast(`${target.name} đã rời khỏi cuộc họp.`);
-  }
-  if (action === 'muteAll') {
-    getParticipants().filter((participant) => !participant.local).forEach((participant) => {
-      state.participants.update(participant.id, { microphoneEnabled: false });
-    });
-    if (showFeedback) showToast('Đã tắt micro của người tham gia.');
-  }
-  render();
+  if (!target) return { success: false, message: 'Không tìm thấy thành viên.' };
+  const result = await meetingService.moderateMeetingParticipant({
+    meetingId: state.meetingId,
+    participantId: target.id,
+    action,
+    value: action === HOST_ACTIONS.SHARE_PERMISSION ? !target.shareScreenAllowed : null
+  });
+  if (!result.success) return { success: false, message: getHostActionFailureMessage(action) };
+  if (result.participant) mergeRealtimeParticipant(result.participant);
+  if (showFeedback) showToast(`${target.name} đã được cập nhật.`);
   return { success: true };
 }
 
@@ -991,54 +979,23 @@ function handleParticipantAction(action, participantId) {
   void applyModerationAction(action, participantId);
 }
 
-function handleWaitingAction(action, waitingId) {
+async function handleWaitingAction(action, waitingId) {
   if (!['host', 'co-host'].includes(state.role)) {
     showToast('Bạn không có quyền xử lý yêu cầu tham gia.');
     return;
   }
-  if (shouldFailModeration('waiting')) {
-    showToast('Không thể xử lý yêu cầu tham gia.');
-    return;
-  }
   const waiting = state.waitingParticipants.find((participant) => participant.id === waitingId);
   if (!waiting) return;
-  if (!isDemoMode) {
-    void meetingService.moderateMeetingParticipant({
-      meetingId: state.meetingId,
-      participantId: waitingId,
-      action: action === 'approve' ? 'approve' : 'reject'
-    }).then((result) => {
-      if (!result.success) showToast(result.code === 'ROOM_FULL' ? `Cuộc họp đã đủ ${MAX_PARTICIPANTS} người.` : 'Không thể xử lý yêu cầu tham gia.');
-      else showToast(action === 'approve' ? `${waiting.name} đã được chấp nhận vào phòng.` : `${waiting.name} đã bị từ chối vào phòng.`);
-    });
-    return;
-  }
-  state.waitingParticipants = state.waitingParticipants.filter((participant) => participant.id !== waitingId);
-  if (action === 'reject') {
-    showToast(`${waiting.name} đã bị từ chối vào phòng.`);
-    render();
-    return;
-  }
-  if (getParticipants().length >= MAX_PARTICIPANTS) {
-    state.waitingParticipants = [...state.waitingParticipants, waiting];
-    showToast(`Cuộc họp đã đủ ${MAX_PARTICIPANTS} người.`);
-    render();
-    return;
-  }
-  // SECURITY: Production approval must re-check capacity atomically on the server.
-  state.participants.upsert({
-    id: `participant-${waiting.id}`,
-    name: waiting.name,
-    role: PARTICIPANT_ROLES.MEMBER,
-    local: false,
-    cameraEnabled: true,
-    microphoneEnabled: true,
-    speaking: false,
-    handRaised: false,
-    shareScreenAllowed: true
+  const result = await meetingService.moderateMeetingParticipant({
+    meetingId: state.meetingId,
+    participantId: waitingId,
+    action: action === 'approve' ? 'approve' : 'reject'
   });
-  showToast(`${waiting.name} đã được chấp nhận vào phòng.`);
-  render();
+  if (!result.success) {
+    showToast(result.code === 'ROOM_FULL' ? `Cuộc họp đã đủ ${MAX_PARTICIPANTS} người.` : 'Không thể xử lý yêu cầu tham gia.');
+    return;
+  }
+  showToast(action === 'approve' ? `${waiting.name} đã được chấp nhận vào phòng.` : `${waiting.name} đã bị từ chối vào phòng.`);
 }
 
 async function handleApproveAll() {
@@ -1050,47 +1007,18 @@ async function handleApproveAll() {
     showToast('Không có ai đang chờ.');
     return;
   }
-  if (shouldFailModeration('waiting')) {
-    showToast('Không thể xử lý yêu cầu tham gia.');
-    return;
-  }
-
-  if (!isDemoMode) {
-    const waiting = [...state.waitingParticipants];
-    const results = await Promise.all(waiting.map((participant) => meetingService.moderateMeetingParticipant({
-      meetingId: state.meetingId,
-      participantId: participant.id,
-      action: 'approve'
-    })));
-    const failed = results.filter((result) => !result.success);
-    if (failed.length) showToast(failed.some((result) => result.code === 'ROOM_FULL') ? `Cuộc họp đã đủ ${MAX_PARTICIPANTS} người.` : 'Không thể xử lý tất cả yêu cầu.');
-    else showToast(`Đã chấp nhận ${waiting.length} người.`);
-    return;
-  }
-
-  const availableSlots = Math.max(0, MAX_PARTICIPANTS - getParticipants().length);
-  const admitted = state.waitingParticipants.slice(0, availableSlots);
-  const remaining = state.waitingParticipants.slice(availableSlots);
-  admitted.forEach((waiting) => {
-    state.participants.upsert({
-      id: `participant-${waiting.id}`,
-      name: waiting.name,
-      role: PARTICIPANT_ROLES.MEMBER,
-      local: false,
-      cameraEnabled: true,
-      microphoneEnabled: true,
-      speaking: false,
-      handRaised: false,
-      shareScreenAllowed: true
-    });
-  });
-  state.waitingParticipants = remaining;
-  if (remaining.length) {
-    showToast(`Đã chấp nhận ${admitted.length} người. Cuộc họp hiện đã đủ ${MAX_PARTICIPANTS} người.`);
+  const waiting = [...state.waitingParticipants];
+  const results = await Promise.all(waiting.map((participant) => meetingService.moderateMeetingParticipant({
+    meetingId: state.meetingId,
+    participantId: participant.id,
+    action: 'approve'
+  })));
+  const failed = results.filter((result) => !result.success);
+  if (failed.length) {
+    showToast(failed.some((result) => result.code === 'ROOM_FULL') ? `Cuộc họp đã đủ ${MAX_PARTICIPANTS} người.` : 'Không thể xử lý tất cả yêu cầu.');
   } else {
-    showToast(`Đã chấp nhận ${admitted.length} người.`);
+    showToast(`Đã chấp nhận ${waiting.length} người.`);
   }
-  render();
 }
 
 function handlePanelAction(action) {
@@ -1170,12 +1098,14 @@ function renderShareSupport() {
   const supported = isScreenShareSupported();
   const localShareAllowed = getLocalParticipant()?.shareScreenAllowed !== false;
   const remotePresenter = state.screenShare.active && !state.screenShare.isLocalPresenter
-    ? findParticipant(state.screenShare.presenterId)
+    ? getScreenSharePresenter()
     : null;
-  const requesting = state.screenShare.status === SCREEN_SHARE_STATES.REQUESTING;
-  const stopping = state.screenShare.status === SCREEN_SHARE_STATES.STOPPING;
+  const remoteShareActive = state.screenShare.active && !state.screenShare.isLocalPresenter
+    && Boolean(remotePresenter || state.screenShare.presenterIdentity || state.screenShare.announced);
+  const requesting = [SCREEN_SHARE_STATES.REQUESTING, SCREEN_SHARE_MEDIA_STATES.PUBLISHING].includes(state.screenShare.status);
+  const stopping = [SCREEN_SHARE_STATES.STOPPING, SCREEN_SHARE_MEDIA_STATES.STOPPING].includes(state.screenShare.status);
   if (shareButton) {
-    shareButton.disabled = requesting || stopping || !localShareAllowed || Boolean(remotePresenter) || (!supported && !state.screenShare.isLocalPresenter);
+    shareButton.disabled = requesting || stopping || !localShareAllowed || remoteShareActive || (!supported && !state.screenShare.isLocalPresenter);
     if (requesting) {
       setIcon(document.querySelector('[data-share-icon]'), 'loader-circle');
       setText('[data-share-label]', 'Đang mở…');
@@ -1183,8 +1113,8 @@ function renderShareSupport() {
     } else if (!localShareAllowed) {
       shareButton.title = 'Chủ trì đã tắt quyền chia sẻ màn hình của bạn.';
       shareButton.setAttribute('aria-label', 'Chia sẻ màn hình đã bị tắt');
-    } else if (remotePresenter) {
-      shareButton.title = `${remotePresenter.name || 'Thành viên'} đang chia sẻ màn hình.`;
+    } else if (remoteShareActive) {
+      shareButton.title = `${getScreenSharePresenterName()} đang chia sẻ màn hình.`;
       shareButton.setAttribute('aria-label', 'Đang có người chia sẻ màn hình');
     } else if (!supported) {
       shareButton.title = 'Thiết bị hoặc trình duyệt này chưa hỗ trợ chia sẻ màn hình.';
@@ -1198,11 +1128,102 @@ function renderShareSupport() {
   if (supportNote) supportNote.hidden = true;
 }
 
+function stopPresentationPlaybackWatch() {
+  if (state.presentationPlaybackTimer) window.clearTimeout(state.presentationPlaybackTimer);
+  state.presentationPlaybackTimer = 0;
+  const watch = state.presentationPlaybackWatch;
+  if (watch && presentationVideo) {
+    ['loadedmetadata', 'canplay', 'playing'].forEach((event) => presentationVideo.removeEventListener(event, watch));
+  }
+  state.presentationPlaybackWatch = null;
+  state.presentationPlaybackTrack = null;
+}
+
+function markPresentationVideoReady(track) {
+  if (state.presentationPlaybackTrack !== track || !isLiveScreenShareTrack(track)) return false;
+  if (!presentationVideo || presentationVideo.videoWidth < 1 || presentationVideo.videoHeight < 1) return false;
+  window.clearTimeout(state.presentationPlaybackTimer);
+  state.presentationPlaybackTimer = 0;
+  state.screenShare = {
+    ...state.screenShare,
+    mediaLive: true,
+    status: SCREEN_SHARE_MEDIA_STATES.LIVE,
+    lastMediaAt: Date.now(),
+    error: ''
+  };
+  render();
+  return true;
+}
+
+function watchPresentationVideo(track) {
+  if (!presentationVideo || !track) return;
+  if (state.presentationPlaybackTrack === track) return;
+  stopPresentationPlaybackWatch();
+  const watch = () => { markPresentationVideoReady(track); };
+  state.presentationPlaybackTrack = track;
+  state.presentationPlaybackWatch = watch;
+  ['loadedmetadata', 'canplay', 'playing'].forEach((event) => presentationVideo.addEventListener(event, watch));
+  state.presentationPlaybackTimer = window.setTimeout(() => {
+    if (state.presentationPlaybackTrack !== track || markPresentationVideoReady(track)) return;
+    state.screenShare = {
+      ...state.screenShare,
+      mediaLive: false,
+      status: SCREEN_SHARE_MEDIA_STATES.FAILED,
+      error: 'SCREEN_SHARE_VIDEO_DIMENSIONS_UNAVAILABLE'
+    };
+    render();
+  }, 4_000);
+}
+
+function clearPresentationVideo() {
+  stopPresentationPlaybackWatch();
+  if (!presentationVideo) return;
+  presentationVideo.pause();
+  presentationVideo.srcObject = null;
+  presentationVideo.hidden = true;
+}
+
+function setPresentationMediaState(text, icon = 'loader-circle', { loading = false, retry = false } = {}) {
+  if (!presentationEmpty) return;
+  presentationEmpty.classList.toggle('is-loading', loading);
+  presentationEmpty.hidden = false;
+  setIcon(presentationEmpty.querySelector('[data-presentation-media-icon]'), icon);
+  setText('[data-presentation-media-text]', text);
+  const retryButton = presentationEmpty.querySelector('[data-presentation-retry]');
+  if (retryButton) retryButton.hidden = !retry;
+}
+
+async function retryPresentationPlayback() {
+  if (!state.screenShare.active || state.screenShare.isLocalPresenter) return;
+  const presenter = getScreenSharePresenter();
+  const presenterIdentity = state.screenShare.presenterIdentity || presenter?.livekitIdentity || '';
+  const currentTrack = state.screenShare.track || state.liveKit?.getRemoteTrack?.(presenterIdentity, 'screen_share');
+  state.screenShare = {
+    ...state.screenShare,
+    presenterIdentity: presenterIdentity || state.screenShare.presenterIdentity,
+    status: SCREEN_SHARE_MEDIA_STATES.SUBSCRIBING,
+    subscribed: false,
+    mediaLive: isLiveScreenShareTrack(currentTrack),
+    track: currentTrack || null,
+    error: ''
+  };
+  render();
+  if (currentTrack && isLiveScreenShareTrack(currentTrack)) return;
+  const result = await state.liveKit?.resubscribeRemoteTrack?.(presenterIdentity, 'screen_share');
+  if (result?.success || !state.screenShare.active || state.screenShare.presenterIdentity !== presenterIdentity) return;
+  state.screenShare = {
+    ...state.screenShare,
+    status: SCREEN_SHARE_MEDIA_STATES.RECOVERING,
+    error: ''
+  };
+  render();
+}
+
 function renderView() {
   if (state.screenShare.active) {
     stage.hidden = true;
     gridTiles.hidden = true;
-    presentationStage.hidden = false;
+  presentationStage.hidden = false;
     if (stageModeStatus) stageModeStatus.hidden = true;
     renderPresentation();
     return;
@@ -1211,10 +1232,7 @@ function renderView() {
   const speakerMode = state.view === 'speaker';
   page.dataset.meetingMode = 'normal';
   presentationStage.hidden = true;
-  presentationVideo.pause();
-  presentationVideo.srcObject = null;
-  presentationVideo.hidden = true;
-  remoteSharePlaceholder.hidden = true;
+  clearPresentationVideo();
   presentationEmpty.hidden = true;
   document.querySelector('[data-stop-presentation]').hidden = true;
   if (stageModeStatus) stageModeStatus.hidden = false;
@@ -1237,7 +1255,7 @@ function renderView() {
 }
 
 function renderPresentation() {
-  const presenter = findParticipant(state.screenShare.presenterId);
+  const presenter = getScreenSharePresenter();
   const localPresenter = state.screenShare.isLocalPresenter;
   const shareButton = document.querySelector('[data-toolbar-action="share"]');
   const stopButton = document.querySelector('[data-stop-presentation]');
@@ -1246,9 +1264,8 @@ function renderPresentation() {
 
   page.dataset.meetingMode = 'presentation';
   setText('[data-stage-heading]', 'Màn hình đang được chia sẻ');
-  setText('[data-presentation-status-text]', localPresenter ? 'Bạn đang chia sẻ màn hình' : `${presenter?.name || 'Thành viên'} đang chia sẻ màn hình`);
-  setText('[data-remote-share-title]', `${presenter?.name || 'Thành viên'} đang trình bày`);
-  setText('[data-remote-share-topic]', 'Nội dung đang được trình bày trong cuộc họp');
+  const presenterName = getScreenSharePresenterName();
+  setText('[data-presentation-status-text]', localPresenter ? 'Bạn đang chia sẻ màn hình' : `${presenterName} đang chia sẻ màn hình`);
   setIcon(presentationStatusIcon, localPresenter ? 'screen-share-off' : 'screen-share');
   stopButton.hidden = !localPresenter;
   stopButton.textContent = 'Dừng chia sẻ';
@@ -1259,9 +1276,9 @@ function renderPresentation() {
   setText('[data-share-state]', localPresenter ? 'Đang chia sẻ' : 'Đang có người trình bày');
   renderShareSupport();
 
-  if (localPresenter && state.screenShare.stream) {
-    remoteSharePlaceholder.hidden = true;
+  if (localPresenter && state.screenShare.stream && isLiveScreenShareTrack(state.screenShare.track || state.screenShare.stream.getVideoTracks?.()[0])) {
     presentationEmpty.hidden = true;
+    presentationEmpty.classList.remove('is-loading');
     video.hidden = false;
     if (video.srcObject !== state.screenShare.stream) {
       video.srcObject = state.screenShare.stream;
@@ -1280,18 +1297,41 @@ function renderPresentation() {
     return;
   }
 
-  video.pause();
-  video.srcObject = null;
-  video.hidden = true;
   if (cameraPip) {
     cameraPip.hidden = true;
     cameraPip.srcObject = null;
   }
-  const hasRemoteTrack = Boolean(!localPresenter && presenter?.livekitIdentity && state.screenShare.track && state.liveKit
-    && state.liveKit.attachRemoteTrack(presenter.livekitIdentity, 'screen_share', video));
-  video.hidden = !hasRemoteTrack;
-  remoteSharePlaceholder.hidden = !presenter || hasRemoteTrack;
-  presentationEmpty.hidden = Boolean(presenter);
+  const presenterIdentity = state.screenShare.presenterIdentity || presenter?.livekitIdentity || '';
+  const hasRemoteTrack = Boolean(!localPresenter && presenterIdentity && hasScreenShareMedia(state.screenShare)
+    && state.liveKit?.attachRemoteTrack?.(presenterIdentity, 'screen_share', video));
+  if (hasRemoteTrack) {
+    video.hidden = false;
+    presentationEmpty.hidden = true;
+    presentationEmpty.classList.remove('is-loading');
+    watchPresentationVideo(state.screenShare.track);
+    if (video.paused) video.play().catch(() => {});
+    return;
+  }
+
+  stopPresentationPlaybackWatch();
+  video.hidden = true;
+  if (video.srcObject) {
+    video.pause();
+    video.srcObject = null;
+  }
+  const stateText = state.screenShare.status === SCREEN_SHARE_MEDIA_STATES.RECOVERING
+    ? 'Đang kết nối lại màn hình…'
+    : state.screenShare.status === SCREEN_SHARE_MEDIA_STATES.FAILED
+      ? 'Không thể tải màn hình đang chia sẻ.'
+      : `Đang tải màn hình của ${presenterName}…`;
+  setPresentationMediaState(
+    stateText,
+    state.screenShare.status === SCREEN_SHARE_MEDIA_STATES.FAILED ? 'triangle-alert' : 'loader-circle',
+    {
+      loading: ![SCREEN_SHARE_MEDIA_STATES.FAILED].includes(state.screenShare.status),
+      retry: state.screenShare.status === SCREEN_SHARE_MEDIA_STATES.FAILED
+    }
+  );
 }
 
 function render() {
@@ -1567,22 +1607,6 @@ async function initializeLocalMedia() {
   state.localMedia.microphoneSupported = supported;
 
   const local = getLocalParticipant();
-  if (isDemoMode) {
-    state.localMedia.cameraEnabled = local.cameraEnabled;
-    state.localMedia.microphoneEnabled = local.microphoneEnabled;
-    state.localMedia.cameraPreference = local.cameraEnabled;
-    state.localMedia.microphonePreference = local.microphoneEnabled;
-    state.localMedia.cameraStatus = local.cameraEnabled ? MEDIA_STATUS.LIVE : MEDIA_STATUS.OFF;
-    state.localMedia.microphoneStatus = local.microphoneEnabled ? MEDIA_STATUS.LIVE : MEDIA_STATUS.OFF;
-    state.localMedia.cameraSupported = true;
-    state.localMedia.microphoneSupported = true;
-    state.localMedia.cameraAvailable = true;
-    state.localMedia.microphoneAvailable = true;
-    media.setCameraEnabled(local.cameraEnabled);
-    media.setMicrophoneEnabled(local.microphoneEnabled);
-    return;
-  }
-
   if (!supported) {
     state.localMedia.cameraEnabled = false;
     state.localMedia.microphoneEnabled = false;
@@ -1749,7 +1773,7 @@ async function ensureMicrophonePlayback() {
 }
 
 async function refreshDeviceAvailability({ recover = false } = {}) {
-  if (isDemoMode || !navigator.mediaDevices?.enumerateDevices) return;
+  if (!navigator.mediaDevices?.enumerateDevices) return;
   let devices;
   try {
     devices = await navigator.mediaDevices.enumerateDevices();
@@ -1817,13 +1841,13 @@ async function toggleLocalMedia(kind) {
   persistLocalMediaPreferences();
   state.participants.upsert({ ...local, [enabledKey]: state.localMedia[enabledKey] });
   const transportResult = await syncLiveKitMediaTrack(kind);
-  if (!transportResult.success && !isDemoMode) showToast('Không thể cập nhật thiết bị trong cuộc họp.');
+  if (!transportResult.success) showToast('Không thể cập nhật thiết bị trong cuộc họp.');
   const mediaStateResult = await meetingService.setMeetingMediaState({
     meetingId: state.meetingId,
     cameraEnabled: state.localMedia.cameraEnabled,
     microphoneEnabled: state.localMedia.microphoneEnabled
   });
-  if (!mediaStateResult.success && !isDemoMode) showToast('Không thể đồng bộ trạng thái thiết bị.');
+  if (!mediaStateResult.success) showToast('Không thể đồng bộ trạng thái thiết bị.');
   render();
 }
 
@@ -1943,46 +1967,15 @@ function setConnection(connectionState, label) {
   setText('[data-connection-label]', label);
 }
 
-function startConnectionMock() {
-  const indicator = document.querySelector('[data-connection-indicator]');
-  if (!scenario) {
-    if (indicator) indicator.hidden = true;
-    return;
-  }
-  if (indicator) indicator.hidden = false;
-  if (scenario === 'reconnecting') {
-    setConnection('reconnecting', 'Đang kết nối lại…');
-    state.reconnectTimer = window.setTimeout(() => setConnection('good', 'Kết nối tốt'), 3500);
-  } else if (scenario === 'degraded') {
-    setConnection('degraded', 'Kết nối không ổn định');
-  }
-}
-
-function startActiveSpeakerMock() {
-  if (scenario !== 'active-speaker-change') return;
-  state.speakerTimer = window.setInterval(() => {
-    const participants = getParticipants().filter((participant) => !participant.local);
-    const currentIndex = participants.findIndex((participant) => participant.id === state.activeParticipantId);
-    const next = participants[(currentIndex + 1) % participants.length];
-    state.activeParticipantId = next?.id || 'local';
-    state.participants.list().forEach((participant) => state.participants.upsert({ ...participant, speaking: participant.id === state.activeParticipantId }));
-    render();
-  }, 9000);
-}
-
 async function handleChatSubmit(event) {
   event.preventDefault();
   const input = event.currentTarget.elements.message;
   const content = String(input.value ?? '').trim();
   if (!content) return;
-  if (!isDemoMode) {
-    const result = await state.meetingRealtime?.sendMessage(content);
-    if (!result?.success) {
-      showToast('Không thể gửi tin nhắn.');
-      return;
-    }
-  } else {
-    state.messages.push({ author: state.displayName, content });
+  const result = await state.meetingRealtime?.sendMessage(content);
+  if (!result?.success) {
+    showToast('Không thể gửi tin nhắn.');
+    return;
   }
   input.value = '';
   renderChat();
@@ -1993,44 +1986,204 @@ function handleParticipantSearch() {
   if (state.panel === 'participants') renderParticipantsPanel();
 }
 
-async function handleScreenShareState(nextState) {
-  const wasLocalPresenter = state.screenShare.isLocalPresenter;
+function finishRemoteScreenShare(reason = 'ended') {
+  const previous = state.screenShare;
+  if (!previous.active && !previous.presenterId && !previous.presenterIdentity) return;
   state.screenShare = {
-    active: Boolean(nextState.active),
-    presenterId: nextState.presenterId,
-    isLocalPresenter: Boolean(nextState.isLocalPresenter),
-    stream: nextState.stream || null,
-    track: nextState.track || null,
-    settings: nextState.settings || null,
-    status: nextState.status || (nextState.active ? SCREEN_SHARE_STATES.LIVE : SCREEN_SHARE_STATES.IDLE)
+    ...previous,
+    active: false,
+    presenterId: null,
+    presenterIdentity: null,
+    presenterName: '',
+    announced: false,
+    publicationAvailable: false,
+    subscribed: false,
+    mediaLive: false,
+    isLocalPresenter: false,
+    stream: null,
+    track: null,
+    settings: null,
+    status: SCREEN_SHARE_MEDIA_STATES.ENDED,
+    error: '',
+    lastEndedPresenterId: previous.presenterId,
+    lastEndedPresenterIdentity: previous.presenterIdentity
   };
-  state.localMedia.isScreenSharing = state.screenShare.isLocalPresenter;
-  if (state.liveKit && state.liveKitConnected) {
-    if (state.screenShare.isLocalPresenter && state.screenShare.track) {
-      void state.liveKit.publishScreenShare(state.screenShare.track);
-    } else if (wasLocalPresenter && !state.screenShare.active) {
-      void state.liveKit.stopScreenShare();
-    }
-  }
-  const localPresenterTransition = state.screenShare.isLocalPresenter || wasLocalPresenter;
-  if (!isDemoMode && state.meetingRealtime && state.meetingId && localPresenterTransition) {
-    const result = await state.meetingRealtime.setScreenShareState(state.screenShare.active);
-    if (!result.success && state.screenShare.active) {
-      stopScreenShare({ source: 'server' });
-      showToast(result.code === 'SCREEN_SHARE_ACTIVE' ? 'Hiện đang có người trình bày.' : 'Không thể đồng bộ chia sẻ màn hình.');
-      return;
-    }
-  }
+  debugScreenShare(`SCREEN_SHARE_${reason.toUpperCase()}`);
+  clearPresentationVideo();
   render();
+  state.screenShare.status = SCREEN_SHARE_MEDIA_STATES.IDLE;
+}
+
+function announceRemoteScreenShare({ participantId = '', participantIdentity = '', name = '', publicationAvailable = false, track = null, announced = true, status = '' } = {}) {
+  const previous = state.screenShare;
+  const nextParticipantId = String(participantId || previous.presenterId || '').trim();
+  const nextIdentity = String(participantIdentity || previous.presenterIdentity || '').trim();
+  const samePresenter = previous.presenterId === nextParticipantId && previous.presenterIdentity === nextIdentity;
+  const preserveExistingTrack = status !== SCREEN_SHARE_MEDIA_STATES.SUBSCRIBING;
+  const liveTrack = isLiveScreenShareTrack(track)
+    ? track
+    : preserveExistingTrack && samePresenter && isLiveScreenShareTrack(previous.track) ? previous.track : null;
+  if (!publicationAvailable && !liveTrack
+    && ((nextIdentity && previous.lastEndedPresenterIdentity === nextIdentity)
+      || (nextParticipantId && previous.lastEndedPresenterId === nextParticipantId))) {
+    return false;
+  }
+  const mediaLive = Boolean(liveTrack && isLiveScreenShareTrack(liveTrack));
+  state.screenShare = {
+    ...previous,
+    active: true,
+    presenterId: nextParticipantId || null,
+    presenterIdentity: nextIdentity || null,
+    presenterName: String(name || previous.presenterName || '').trim(),
+    announced: Boolean(announced || previous.announced),
+    publicationAvailable: Boolean(publicationAvailable || previous.publicationAvailable || liveTrack),
+    subscribed: Boolean(liveTrack),
+    mediaLive,
+    isLocalPresenter: false,
+    stream: null,
+    track: liveTrack,
+    status: status || (mediaLive ? SCREEN_SHARE_MEDIA_STATES.LIVE : publicationAvailable ? SCREEN_SHARE_MEDIA_STATES.SUBSCRIBING : SCREEN_SHARE_MEDIA_STATES.ANNOUNCED),
+    lastMediaAt: mediaLive ? Date.now() : previous.lastMediaAt,
+    error: '',
+    lastEndedPresenterId: null,
+    lastEndedPresenterIdentity: null
+  };
+  debugScreenShare(mediaLive ? 'SCREEN_SHARE_SUBSCRIBED' : publicationAvailable ? 'SCREEN_SHARE_PUBLISHED' : 'SCREEN_SHARE_ANNOUNCED', {
+    participantId: nextParticipantId,
+    participantIdentity: nextIdentity,
+    trackSid: liveTrack?.sid || null
+  });
+  return true;
+}
+
+async function handleScreenShareState(nextState) {
+  const previous = state.screenShare;
+  const wasLocalPresenter = previous.isLocalPresenter;
+  const isLocalPresenter = Boolean(nextState.isLocalPresenter);
+
+  if (isLocalPresenter) {
+    const operation = ++state.screenShareOperation;
+    const track = nextState.track || nextState.stream?.getVideoTracks?.()[0] || null;
+    const shouldPublish = Boolean(state.liveKit && state.liveKitConnected && track);
+    state.screenShare = {
+      ...previous,
+      active: true,
+      presenterId: state.participantId || 'local',
+      presenterIdentity: state.localParticipantIdentity || null,
+      presenterName: state.displayName,
+      announced: false,
+      publicationAvailable: !shouldPublish,
+      subscribed: false,
+      mediaLive: isLiveScreenShareTrack(track),
+      isLocalPresenter: true,
+      stream: nextState.stream || null,
+      track,
+      settings: nextState.settings || null,
+      status: shouldPublish ? SCREEN_SHARE_MEDIA_STATES.PUBLISHING : SCREEN_SHARE_MEDIA_STATES.LIVE,
+      startedAt: previous.startedAt || Date.now(),
+      lastMediaAt: isLiveScreenShareTrack(track) ? Date.now() : previous.lastMediaAt,
+      error: '',
+      lastEndedPresenterId: null,
+      lastEndedPresenterIdentity: null
+    };
+    state.localMedia.isScreenSharing = true;
+    state.participants?.update(getLocalParticipant()?.id, {
+      screenShareActive: true,
+      screenSharing: true,
+      screenShareTrack: track
+    });
+    debugScreenShare(shouldPublish ? 'SCREEN_SHARE_PUBLISHING' : 'SCREEN_SHARE_LIVE', { trackSid: track?.id || track?.sid || null });
+    render();
+
+    if (shouldPublish) {
+      const publishResult = await state.liveKit.publishScreenShare(track);
+      if (operation !== state.screenShareOperation || !state.screenShare.isLocalPresenter) return;
+      if (!publishResult.success) {
+        state.screenShare = {
+          ...state.screenShare,
+          status: SCREEN_SHARE_MEDIA_STATES.FAILED,
+          error: 'LIVEKIT_SCREEN_SHARE_PUBLISH_FAILED'
+        };
+        debugScreenShare('SCREEN_SHARE_FAILED');
+        render();
+        stopScreenShare({ source: 'publish-failed' });
+        showToast('Không thể phát màn hình lên cuộc họp.');
+        return;
+      }
+      state.screenShare = {
+        ...state.screenShare,
+        publicationAvailable: true,
+        mediaLive: isLiveScreenShareTrack(track),
+        status: SCREEN_SHARE_MEDIA_STATES.LIVE,
+        lastMediaAt: Date.now()
+      };
+      debugScreenShare('SCREEN_SHARE_PUBLISHED', { trackSid: publishResult.publication?.trackSid || publishResult.publication?.sid || null });
+    }
+
+    if (state.meetingRealtime && state.meetingId) {
+      const result = await state.meetingRealtime.setScreenShareState(true);
+      if (operation !== state.screenShareOperation || !state.screenShare.isLocalPresenter) return;
+      if (!result.success) {
+        stopScreenShare({ source: 'server' });
+        showToast(result.code === 'SCREEN_SHARE_ACTIVE' ? 'Hiện đang có người trình bày.' : 'Không thể đồng bộ chia sẻ màn hình.');
+        return;
+      }
+      state.screenShare.announced = true;
+    }
+    render();
+    return;
+  }
+
+  if (wasLocalPresenter) {
+    const operation = ++state.screenShareOperation;
+    state.screenShare = {
+      ...previous,
+      active: true,
+      announced: false,
+      publicationAvailable: false,
+      subscribed: false,
+      mediaLive: false,
+      isLocalPresenter: false,
+      stream: null,
+      track: null,
+      status: SCREEN_SHARE_MEDIA_STATES.STOPPING,
+      error: ''
+    };
+    state.localMedia.isScreenSharing = false;
+    state.participants?.update(getLocalParticipant()?.id, {
+      screenShareActive: false,
+      screenSharing: false,
+      screenShareTrack: null
+    });
+    debugScreenShare('SCREEN_SHARE_STOPPING');
+    render();
+    if (state.liveKit && state.liveKitConnected) await state.liveKit.stopScreenShare();
+    if (state.meetingRealtime && state.meetingId) await state.meetingRealtime.setScreenShareState(false);
+    if (operation !== state.screenShareOperation) return;
+    finishRemoteScreenShare('ENDED');
+    return;
+  }
+
+  if (!nextState.active && nextState.status !== SCREEN_SHARE_STATES.REQUESTING) {
+    finishRemoteScreenShare(nextState.reason === 'browser-stopped' ? 'ENDED' : 'STOPPED');
+    return;
+  }
+
+  if (nextState.active && nextState.presenterId) {
+    announceRemoteScreenShare({ participantId: nextState.presenterId, name: nextState.remotePresenter?.name, announced: true });
+    render();
+  }
 }
 
 function toUiParticipant(value, { local = false } = {}) {
   const participant = normalizeRealtimeParticipant(value) || value;
   if (!participant?.id && !participant?.livekitIdentity) return null;
+  const nameValidation = validateMeetingDisplayName(participant.name || participant.displayName || participant.display_name);
+  if (!nameValidation.valid) return null;
   return {
     ...participant,
     id: participant.id || participant.livekitIdentity,
-    name: participant.name || participant.displayName || 'Gmail user',
+    name: nameValidation.value,
     local,
     role: participant.role || PARTICIPANT_ROLES.MEMBER,
     cameraEnabled: Boolean(participant.cameraEnabled),
@@ -2050,17 +2203,17 @@ function isLocalRealtimeParticipant(participant) {
 }
 
 function canPublishActivity() {
-  return !isDemoMode
-    && state.connectionState === 'CONNECTED'
+  return state.connectionState === 'CONNECTED'
     && state.liveKitConnected
     && !state.isCleaningUp
     && !state.meetingEndHandled;
 }
 
 function activityParticipant(participant) {
+  const nameValidation = validateMeetingDisplayName(participant?.name || participant?.displayName);
   return {
     participantId: participant?.id || participant?.participantId || participant?.livekitIdentity,
-    name: participant?.name || participant?.displayName || 'Một thành viên'
+    name: nameValidation.valid ? nameValidation.value : ''
   };
 }
 
@@ -2069,7 +2222,21 @@ function removeParticipantEverywhere(participantId) {
   state.waitingParticipants = state.waitingParticipants.filter((participant) => participant.id !== participantId);
   if (state.activeParticipantId === participantId) state.activeParticipantId = getLocalParticipant()?.id || 'local';
   if (state.screenShare.presenterId === participantId) {
-    state.screenShare = { ...state.screenShare, active: false, presenterId: null, track: null, stream: null, isLocalPresenter: false };
+    if (state.screenShare.isLocalPresenter) {
+      state.screenShare = {
+        ...state.screenShare,
+        active: false,
+        presenterId: null,
+        presenterIdentity: null,
+        presenterName: '',
+        track: null,
+        stream: null,
+        isLocalPresenter: false,
+        status: SCREEN_SHARE_MEDIA_STATES.IDLE
+      };
+    } else {
+      finishRemoteScreenShare('ENDED');
+    }
   }
 }
 
@@ -2091,8 +2258,11 @@ function handleRemoteParticipantRemoved() {
 function mergeRealtimeParticipant(value, eventType = 'UPDATE', { suppressActivity = false } = {}) {
   const participant = normalizeRealtimeParticipant(value) || value;
   if (!participant) return;
+  const source = normalizeTrackSource(value.source || participant.source);
   const local = isLocalRealtimeParticipant(participant);
-  const existingBeforeChange = state.participants ? findParticipant(participant.id) : null;
+  const existingBeforeChange = state.participants
+    ? findParticipantExact(participant.id || participant.livekitIdentity || participant.identity)
+    : null;
   const activityAllowed = canPublishActivity() && !suppressActivity;
   if (local && ['removed', 'blocked', 'rejected'].includes(participant.status)) {
     handleRemoteParticipantRemoved();
@@ -2101,6 +2271,7 @@ function mergeRealtimeParticipant(value, eventType = 'UPDATE', { suppressActivit
 
   const uiParticipant = toUiParticipant(participant, { local });
   if (!uiParticipant) return;
+  noteAttendeeHistory(uiParticipant);
   const isWaiting = participant.status === 'waiting';
   const isActive = ['joining', 'admitted'].includes(participant.status);
   if (!isActive && !isWaiting || eventType === 'DELETE') {
@@ -2144,32 +2315,41 @@ function mergeRealtimeParticipant(value, eventType = 'UPDATE', { suppressActivit
   }
 
   const wasSharing = Boolean(existingBeforeChange?.screenSharing || existingBeforeChange?.screenShareActive);
-  const isSharing = Boolean(participant.screenSharing || participant.screenShareActive);
+  const samePresenter = state.screenShare.presenterId === uiParticipant.id
+    || Boolean(participant.livekitIdentity && state.screenShare.presenterIdentity === participant.livekitIdentity);
+  const liveTrack = isLiveScreenShareTrack(participant.screenShareTrack)
+    ? participant.screenShareTrack
+    : eventType !== 'track-published' && samePresenter && hasScreenShareMedia(state.screenShare)
+      ? state.screenShare.track
+      : null;
+  const pendingRemoteShare = samePresenter && state.screenShare.active && !state.screenShare.isLocalPresenter
+    && [SCREEN_SHARE_MEDIA_STATES.ANNOUNCED, SCREEN_SHARE_MEDIA_STATES.SUBSCRIBING, SCREEN_SHARE_MEDIA_STATES.RECOVERING].includes(state.screenShare.status);
+  const metadataSharing = Boolean(participant.screenSharing || participant.screenShareActive);
+  const isTrackUnpublished = !local && source === 'screen_share' && eventType === 'track-unpublished' && samePresenter;
+  const isSharing = !isTrackUnpublished && (metadataSharing || Boolean(liveTrack) || pendingRemoteShare);
   if (!local && existingBeforeChange && wasSharing !== isSharing && activityAllowed) {
     if (isSharing) activityFeed.shareStarted(activityParticipant(uiParticipant));
     else activityFeed.shareStopped(activityParticipant(uiParticipant));
   }
 
-  if (!local && participant.screenSharing) {
-    state.screenShare = {
-      ...state.screenShare,
-      active: true,
-      presenterId: uiParticipant.id,
-      isLocalPresenter: false,
-      stream: null,
-      track: state.screenShare.presenterId === uiParticipant.id ? state.screenShare.track : null,
-      status: SCREEN_SHARE_STATES.LIVE
-    };
-  } else if (!local && state.screenShare.presenterId === uiParticipant.id && !participant.screenSharing) {
-    state.screenShare = {
-      ...state.screenShare,
-      active: false,
-      presenterId: null,
-      isLocalPresenter: false,
-      stream: null,
-      track: null,
-      status: SCREEN_SHARE_STATES.IDLE
-    };
+  if (isTrackUnpublished) {
+    finishRemoteScreenShare('ENDED');
+  } else if (!local && (metadataSharing || liveTrack || pendingRemoteShare)) {
+    announceRemoteScreenShare({
+      participantId: uiParticipant.id,
+      participantIdentity: participant.livekitIdentity || participant.identity,
+      name: uiParticipant.name,
+      announced: metadataSharing || eventType === 'track-published',
+      publicationAvailable: Boolean(participant.screenSharePublication) || eventType === 'track-published',
+      track: liveTrack,
+      status: liveTrack
+        ? SCREEN_SHARE_MEDIA_STATES.LIVE
+        : eventType === 'track-published'
+          ? SCREEN_SHARE_MEDIA_STATES.SUBSCRIBING
+          : pendingRemoteShare ? state.screenShare.status : SCREEN_SHARE_MEDIA_STATES.ANNOUNCED
+    });
+  } else if (!local && samePresenter && state.screenShare.active) {
+    finishRemoteScreenShare('ENDED');
   }
 
   if (local) {
@@ -2216,6 +2396,7 @@ function replaceRealtimeParticipants(values) {
     })
     .filter(Boolean)
     .filter((participant) => ['joining', 'admitted'].includes(participant.status || 'admitted'));
+  next.forEach(noteAttendeeHistory);
   if (!next.some((participant) => participant.local)) {
     const local = getLocalParticipant();
     if (local) next.unshift(local);
@@ -2236,24 +2417,28 @@ function replaceRealtimeParticipants(values) {
     .map((value) => toUiParticipant(value))
     .find(Boolean);
   if (remotePresenter) {
-    state.screenShare = {
-      ...state.screenShare,
-      active: true,
-      presenterId: remotePresenter.id,
-      isLocalPresenter: false,
-      stream: null,
-      track: state.screenShare.presenterId === remotePresenter.id ? state.screenShare.track : null,
-      status: SCREEN_SHARE_STATES.LIVE
-    };
+    const existingShare = state.screenShare;
+    const samePresenter = existingShare.presenterId === remotePresenter.id
+      || Boolean(remotePresenter.livekitIdentity && existingShare.presenterIdentity === remotePresenter.livekitIdentity);
+    const liveTrack = samePresenter && hasScreenShareMedia(existingShare) ? existingShare.track : null;
+    announceRemoteScreenShare({
+      participantId: remotePresenter.id,
+      participantIdentity: remotePresenter.livekitIdentity,
+      name: remotePresenter.name,
+      announced: true,
+      publicationAvailable: Boolean(remotePresenter.screenSharePublication),
+      track: liveTrack,
+      status: liveTrack
+        ? SCREEN_SHARE_MEDIA_STATES.LIVE
+        : samePresenter && [SCREEN_SHARE_MEDIA_STATES.SUBSCRIBING, SCREEN_SHARE_MEDIA_STATES.RECOVERING].includes(existingShare.status)
+          ? existingShare.status
+          : SCREEN_SHARE_MEDIA_STATES.ANNOUNCED
+    });
   } else if (!state.screenShare.isLocalPresenter && state.screenShare.active) {
-    state.screenShare = {
-      ...state.screenShare,
-      active: false,
-      presenterId: null,
-      stream: null,
-      track: null,
-      status: SCREEN_SHARE_STATES.IDLE
-    };
+    const pendingRemoteShare = state.screenShare.announced
+      || state.screenShare.publicationAvailable
+      || [SCREEN_SHARE_MEDIA_STATES.ANNOUNCED, SCREEN_SHARE_MEDIA_STATES.SUBSCRIBING, SCREEN_SHARE_MEDIA_STATES.RECOVERING].includes(state.screenShare.status);
+    if (!hasScreenShareMedia(state.screenShare) && !pendingRemoteShare) finishRemoteScreenShare('ENDED');
   }
   if (!next.some((participant) => participant.id === state.activeParticipantId)) state.activeParticipantId = next[0]?.id || 'local';
   if (!state.userSelectedView) state.view = next.length > 1 ? 'grid' : 'speaker';
@@ -2289,19 +2474,25 @@ function handleLiveKitParticipants(values) {
 
 function handleLiveKitParticipant(value) {
   if (!value) return;
+  const source = normalizeTrackSource(value.source);
+  const eventType = value.eventType || 'UPDATE';
   if (value.disconnected) {
     if (state.connectionState === 'RECONNECTING') {
       state.reconnectingParticipantKeys.add(String(value.id || value.livekitIdentity || '').trim());
       return;
     }
     const existing = findParticipantByLiveKitIdentity(value.livekitIdentity) || getParticipants().find((item) => item.id === value.id);
+    const disconnectedIdentity = String(value.livekitIdentity || '').trim();
+    const disconnectedId = existing?.id || value.id || disconnectedIdentity;
     if (existing) {
       if (state.liveKitParticipantsHydrated && !existing.local && !state.meetingEndHandled) {
         if (canPublishActivity()) activityFeed.left(activityParticipant(existing));
       }
       removeParticipantEverywhere(existing.id);
-      render();
     }
+    if (state.screenShare.presenterIdentity === disconnectedIdentity
+      || state.screenShare.presenterId === disconnectedId) finishRemoteScreenShare('ENDED');
+    render();
     return;
   }
   const existing = findParticipantByLiveKitIdentity(value.livekitIdentity);
@@ -2315,59 +2506,92 @@ function handleLiveKitParticipant(value) {
     ...value,
     id: value.id || existing?.id || value.livekitIdentity,
     status: 'admitted',
-    eventType: value.eventType || 'updated'
-  }, isInitialParticipant ? 'updated' : value.eventType || 'UPDATE', { suppressActivity: reconnectingParticipant });
+    eventType,
+    source
+  }, isInitialParticipant ? 'updated' : eventType, { suppressActivity: reconnectingParticipant });
   const updatedParticipant = findParticipantByLiveKitIdentity(value.livekitIdentity)
     || getParticipants().find((participant) => participant.id === value.id);
-  if (updatedParticipant && ['camera', 'microphone', 'screen_share'].includes(value.source)
-    && ['track-published', 'track-unpublished'].includes(value.eventType)) {
-    const changes = value.source === 'camera'
+  if (updatedParticipant && ['camera', 'microphone', 'screen_share'].includes(source)
+    && ['track-published', 'track-unpublished'].includes(eventType)) {
+    const changes = source === 'camera'
       ? { cameraTrack: value.cameraTrack || null }
-      : value.source === 'microphone'
+      : source === 'microphone'
         ? { microphoneTrack: value.microphoneTrack || null }
         : { screenShareTrack: value.screenShareTrack || null };
     state.participants.update(updatedParticipant.id, changes);
-    render();
   }
+  if (!isLocalRealtimeParticipant(value) && source === 'screen_share' && eventType === 'track-published') {
+    const participantId = updatedParticipant?.id || value.id || value.livekitIdentity;
+    announceRemoteScreenShare({
+      participantId,
+      participantIdentity: value.livekitIdentity,
+      name: updatedParticipant?.name || value.name,
+      announced: true,
+      publicationAvailable: true,
+      status: SCREEN_SHARE_MEDIA_STATES.SUBSCRIBING
+    });
+  } else if (!isLocalRealtimeParticipant(value) && source === 'screen_share' && eventType === 'track-unpublished') {
+    const participantId = updatedParticipant?.id || value.id || value.livekitIdentity;
+    if (updatedParticipant) {
+      state.participants.update(updatedParticipant.id, {
+        screenShareActive: false,
+        screenShareTrack: null,
+        screenSharing: false
+      });
+    }
+    if (state.screenShare.presenterId === participantId
+      || state.screenShare.presenterIdentity === value.livekitIdentity) {
+      finishRemoteScreenShare('ENDED');
+    }
+  }
+  render();
 }
 
 function handleLiveKitTrack({ type, track, participant, source }) {
-  const remote = findParticipantByLiveKitIdentity(participant?.identity);
+  const normalizedSource = normalizeTrackSource(source);
+  const participantIdentity = String(participant?.identity || '').trim();
+  const remote = findParticipantByLiveKitIdentity(participantIdentity);
   let metadata = {};
   try { metadata = JSON.parse(participant?.metadata || '{}'); } catch { metadata = {}; }
-  const participantId = remote?.id || metadata.participantId || participant?.identity;
+  const participantId = remote?.id
+    || metadata.participantId
+    || (state.screenShare.presenterIdentity === participantIdentity ? state.screenShare.presenterId : '')
+    || participantIdentity;
   if (!participantId) return;
   if (!remote && !getParticipants().some((item) => item.id === participantId)) {
-    state.participants.upsert(toUiParticipant({
+    const uiParticipant = toUiParticipant({
       id: participantId,
       userId: metadata.userId,
-      livekitIdentity: participant.identity,
-      name: participant.name,
+      livekitIdentity: participantIdentity,
+      name: participant?.name,
       role: metadata.role,
       status: 'admitted',
       cameraEnabled: false,
       microphoneEnabled: false,
       shareScreenAllowed: metadata.shareScreenAllowed !== false
-    }));
+    });
+    if (uiParticipant) state.participants.upsert(uiParticipant);
   }
-  if (source === 'camera') {
+  if (normalizedSource === 'camera') {
     state.participants.update(participantId, {
       cameraEnabled: true,
       cameraTrack: track
     });
-  } else if (source === 'microphone') {
+  } else if (normalizedSource === 'microphone') {
     state.participants.update(participantId, { microphoneEnabled: true, microphoneTrack: track });
-  } else if (source === 'screen_share') {
-    state.screenShare = {
-      ...state.screenShare,
-      active: true,
-      presenterId: participantId,
-      isLocalPresenter: false,
-      stream: null,
+  } else if (normalizedSource === 'screen_share') {
+    const mediaLive = isLiveScreenShareTrack(track);
+    announceRemoteScreenShare({
+      participantId,
+      participantIdentity,
+      name: remote?.name || participant?.name,
+      announced: true,
+      publicationAvailable: true,
       track,
-      status: SCREEN_SHARE_STATES.LIVE
-    };
-    state.participants.update(participantId, {
+      status: mediaLive ? SCREEN_SHARE_MEDIA_STATES.LIVE : SCREEN_SHARE_MEDIA_STATES.RECOVERING
+    });
+    const participantEntry = findParticipantExact(participantId);
+    participantEntry && state.participants.update(participantId, {
       screenShareActive: true,
       screenShareTrack: track,
       screenSharing: true
@@ -2377,14 +2601,35 @@ function handleLiveKitTrack({ type, track, participant, source }) {
 }
 
 function handleLiveKitTrackRemoved({ track, participant, source }) {
-  const remote = findParticipantByLiveKitIdentity(participant?.identity);
-  if (source === 'camera' && remote) state.participants.update(remote.id, { cameraEnabled: false, cameraTrack: null });
-  if (source === 'microphone' && remote) state.participants.update(remote.id, { microphoneEnabled: false, microphoneTrack: null });
-  if (source === 'screen_share' && state.screenShare.presenterId === remote?.id) {
-    state.screenShare = { ...state.screenShare, active: false, presenterId: null, track: null, stream: null, isLocalPresenter: false };
+  const normalizedSource = normalizeTrackSource(source);
+  const participantIdentity = String(participant?.identity || '').trim();
+  const remote = findParticipantByLiveKitIdentity(participantIdentity);
+  const participantId = remote?.id
+    || (state.screenShare.presenterIdentity === participantIdentity ? state.screenShare.presenterId : '')
+    || participantIdentity;
+  if (normalizedSource === 'camera' && remote) state.participants.update(remote.id, { cameraEnabled: false, cameraTrack: null });
+  if (normalizedSource === 'microphone' && remote) state.participants.update(remote.id, { microphoneEnabled: false, microphoneTrack: null });
+  if (normalizedSource === 'screen_share') {
+    if (remote) state.participants.update(remote.id, { screenShareActive: false, screenShareTrack: null, screenSharing: false });
+    const matchesPresenter = state.screenShare.presenterId === participantId
+      || state.screenShare.presenterIdentity === participantIdentity;
+    if (matchesPresenter) {
+      if (state.connectionState === 'RECONNECTING') {
+        state.screenShare = {
+          ...state.screenShare,
+          active: true,
+          publicationAvailable: false,
+          subscribed: false,
+          mediaLive: false,
+          track: null,
+          status: SCREEN_SHARE_MEDIA_STATES.RECOVERING,
+          error: ''
+        };
+      } else {
+        finishRemoteScreenShare('ENDED');
+      }
+    }
   }
-  if (source === 'screen_share' && remote) state.participants.update(remote.id, { screenShareActive: false, screenShareTrack: null, screenSharing: false });
-  track?.detach?.();
   render();
 }
 
@@ -2419,16 +2664,21 @@ function handleMeetingRealtimeMessage(message) {
 
 function handleMeetingRealtimeUpdate(meeting) {
   if (!meeting) return;
+  state.meetingStatus = meeting.status || state.meetingStatus;
+  if (meeting.hasHadAttendee === true) state.hasHadAttendee = true;
+  if (meeting.endedReason) state.endedReason = meeting.endedReason;
   if (meeting.status === MEETING_STATUSES.ENDING || meeting.status === MEETING_STATUSES.ENDED) {
-    void handleRemoteMeetingEnded();
+    void handleRemoteMeetingEnded(meeting);
     return;
   }
   if (meeting.title) state.meetingTitle = meeting.title;
   if (meeting.startedAt) state.startedAt = Date.parse(meeting.startedAt) || Number(meeting.startedAt) || state.startedAt;
   setText('[data-meeting-title]', state.meetingTitle);
+  updateIdleWarning();
 }
 
 function getRealtimeErrorMessage(code) {
+  if (code === 'INVALID_DISPLAY_NAME') return 'Tên hiển thị không hợp lệ. Vui lòng quay lại để nhập tên từ 2 đến 50 ký tự.';
   if (code === 'ROOM_FULL') return `Cuộc họp đã đủ ${MAX_PARTICIPANTS} người tham gia.`;
   if (code === 'MEETING_ENDED') return 'Cuộc họp đã kết thúc.';
   if (code === 'MEETING_NOT_STARTED') return 'Chủ phòng chưa bắt đầu cuộc họp.';
@@ -2438,12 +2688,25 @@ function getRealtimeErrorMessage(code) {
 }
 
 async function initializeRealtimeMeeting() {
-  if (isDemoMode) return { success: true };
   state.meetingId = state.meetingId || meetingContext.meeting?.id || getStoredJoinedMeeting()?.id || '';
-  if (!state.meetingId) return { success: false, code: 'MEETING_NOT_FOUND' };
 
-  const tokenResult = await requestLiveKitToken(state.roomCode, state.sessionId);
+  const tokenResult = await requestLiveKitToken(state.roomCode, state.sessionId, state.displayName);
   if (!tokenResult.success) return tokenResult;
+  const tokenName = validateMeetingDisplayName(tokenResult.displayName);
+  if (!tokenName.valid) return { success: false, code: 'INVALID_DISPLAY_NAME' };
+  state.displayName = tokenName.value;
+  writeSession('flashMeeting.displayName', state.displayName);
+  try {
+    const storedParticipant = JSON.parse(readSession('flashMeeting.joinedParticipant') || 'null');
+    if (storedParticipant && typeof storedParticipant === 'object') {
+      storedParticipant.displayName = state.displayName;
+      writeSession('flashMeeting.joinedParticipant', JSON.stringify(storedParticipant));
+    }
+  } catch {
+    // The server response remains authoritative when session storage is unavailable.
+  }
+  const localParticipant = getLocalParticipant();
+  if (localParticipant) state.participants.update(localParticipant.id, { name: state.displayName });
   state.meetingId = tokenResult.meetingId;
   state.participantId = tokenResult.participantId;
   state.localParticipantIdentity = tokenResult.livekitIdentity || '';
@@ -2462,15 +2725,56 @@ async function initializeRealtimeMeeting() {
       render();
     },
     onConnection: (connectionState) => {
+      const previousConnectionState = state.connectionState;
       state.connectionState = connectionState;
       state.liveKitConnected = connectionState === 'CONNECTED';
       if (connectionState === 'RECONNECTING') {
         const indicator = document.querySelector('[data-connection-indicator]');
         if (indicator) indicator.hidden = false;
         setConnection('reconnecting', 'Đang kết nối lại…');
+        if (state.screenShare.active && !state.screenShare.isLocalPresenter) {
+          state.screenShare = {
+            ...state.screenShare,
+            status: SCREEN_SHARE_MEDIA_STATES.RECOVERING,
+            publicationAvailable: false,
+            subscribed: false,
+            mediaLive: false,
+            track: null,
+            error: ''
+          };
+          render();
+        }
       } else if (connectionState === 'CONNECTED') {
         const indicator = document.querySelector('[data-connection-indicator]');
         if (indicator) indicator.hidden = true;
+        if (previousConnectionState === 'RECONNECTING'
+          && state.screenShare.active
+          && !state.screenShare.isLocalPresenter) {
+          const presenter = getScreenSharePresenter();
+          const presenterIdentity = state.screenShare.presenterIdentity || presenter?.livekitIdentity || '';
+          if (presenterIdentity) {
+            state.screenShare = {
+              ...state.screenShare,
+              presenterIdentity,
+              status: SCREEN_SHARE_MEDIA_STATES.SUBSCRIBING,
+              publicationAvailable: false,
+              subscribed: false,
+              mediaLive: false,
+              track: null,
+              error: ''
+            };
+            render();
+            void state.liveKit?.resubscribeRemoteTrack?.(presenterIdentity, 'screen_share').then((result) => {
+              if (result?.success || !state.screenShare.active || state.screenShare.presenterIdentity !== presenterIdentity) return;
+              state.screenShare = {
+                ...state.screenShare,
+                status: SCREEN_SHARE_MEDIA_STATES.RECOVERING,
+                error: ''
+              };
+              render();
+            });
+          }
+        }
       }
     },
     onDisconnected: (reason) => {
@@ -2491,6 +2795,7 @@ async function initializeRealtimeMeeting() {
 
   state.meetingRealtime = createMeetingRealtimeController({
     meetingId: state.meetingId,
+    roomCode: state.roomCode,
     sessionId: state.sessionId,
     onParticipants: replaceRealtimeParticipants,
     onParticipant: mergeRealtimeParticipant,
@@ -2501,7 +2806,8 @@ async function initializeRealtimeMeeting() {
     },
     onError: ({ code }) => {
       if (!state.isCleaningUp) showToast(getRealtimeErrorMessage(code));
-    }
+    },
+    displayName: state.displayName
   });
   const realtimeResult = await state.meetingRealtime.connect();
   if (!realtimeResult.success) return realtimeResult;
@@ -2547,14 +2853,24 @@ function reconcileMediaState() {
   if (shareState.active !== state.screenShare.active
     || shareState.presenterId !== state.screenShare.presenterId
     || shareState.stream !== state.screenShare.stream) {
+    const mediaLive = Boolean(shareState.isLocalPresenter && isLiveScreenShareTrack(shareState.track || shareState.stream?.getVideoTracks?.()[0]));
     state.screenShare = {
+      ...state.screenShare,
       active: shareState.active,
-      presenterId: shareState.presenterId,
+      presenterId: shareState.presenterId || null,
+      presenterIdentity: shareState.isLocalPresenter ? state.localParticipantIdentity || null : state.screenShare.presenterIdentity,
+      presenterName: shareState.isLocalPresenter ? state.displayName : state.screenShare.presenterName,
+      announced: state.screenShare.announced,
+      publicationAvailable: state.screenShare.publicationAvailable,
+      subscribed: shareState.isLocalPresenter ? false : state.screenShare.subscribed,
+      mediaLive,
       isLocalPresenter: shareState.isLocalPresenter,
       stream: shareState.stream || null,
       track: shareState.track || null,
       settings: shareState.settings || null,
-      status: shareState.status || (shareState.active ? SCREEN_SHARE_STATES.LIVE : SCREEN_SHARE_STATES.IDLE)
+      status: shareState.status || (shareState.active ? SCREEN_SHARE_MEDIA_STATES.LIVE : SCREEN_SHARE_MEDIA_STATES.IDLE),
+      lastMediaAt: mediaLive ? Date.now() : state.screenShare.lastMediaAt,
+      error: ''
     };
     state.localMedia.isScreenSharing = shareState.isLocalPresenter;
   }
@@ -2613,12 +2929,8 @@ function cleanup({ finalizeRecording = true } = {}) {
   if (finalizeRecording) await recordingController.cleanup({ finalize: true });
   else await recordingController.cleanup({ finalize: false });
   window.clearInterval(state.timer);
-  window.clearInterval(state.speakerTimer);
-  window.clearTimeout(state.reconnectTimer);
   window.clearTimeout(state.toastTimer);
   state.timer = 0;
-  state.speakerTimer = 0;
-  state.reconnectTimer = 0;
   state.toastTimer = 0;
   try { await state.meetingRealtime?.leave?.(); } catch { /* Membership cleanup is best effort. */ }
   try { await state.liveKit?.disconnect?.({ stopTracks: false }); } catch { /* LiveKit cleanup is best effort. */ }
@@ -2792,36 +3104,42 @@ function navigateToDashboard() {
   window.location.href = getPageUrl('index.html');
 }
 
-function showMeetingEndedModal() {
+function showMeetingEndedModal(meeting = null) {
+  const isIdleEnded = (meeting?.endedReason || state.endedReason) === 'idle_no_attendee';
   modal.info({
-    eyebrow: 'Cuộc họp đã kết thúc',
-    title: 'Cuộc họp đã kết thúc',
-    message: 'Chủ trì đã kết thúc cuộc họp.',
+    eyebrow: isIdleEnded ? 'Cuộc họp đã tự động kết thúc' : 'Cuộc họp đã kết thúc',
+    title: isIdleEnded ? 'Cuộc họp đã tự động kết thúc' : 'Cuộc họp đã kết thúc',
+    message: isIdleEnded
+      ? 'Không có thành viên nào tham gia trong 30 phút, nên cuộc họp đã được đóng tự động.'
+      : 'Chủ trì đã kết thúc cuộc họp.',
     actions: [
-      { label: 'Về Dashboard', variant: 'primary', onClick: navigateToDashboard }
+      { label: isIdleEnded ? 'Về trang chủ' : 'Về Dashboard', variant: 'primary', onClick: navigateToDashboard }
     ]
   });
 }
 
-async function handleRemoteMeetingEnded() {
+async function handleRemoteMeetingEnded(meeting = null) {
   if (state.meetingEndHandled || state.leaveActionInFlight || isMeetingTransitioning()) return;
   state.meetingEndHandled = true;
+  state.meetingStatus = MEETING_STATUSES.ENDED;
+  state.endedReason = meeting?.endedReason || state.endedReason || null;
   state.leaveActionInFlight = true;
   page.dataset.meetingState = 'ended';
+  state.meetingRealtime?.close?.();
   try {
     await cleanup({ finalizeRecording: true });
   } catch {
     // The meeting is already closed remotely; media cleanup remains best effort.
   }
   writeSession('flashMeeting.leaveResult', JSON.stringify(createLeaveResult('MEETING_ENDED')));
-  showMeetingEndedModal();
+  showMeetingEndedModal(meeting);
 }
 
 function handleMeetingEvent(event) {
   if (event?.type !== 'MEETING_ENDED') return;
   const eventRoomCode = String(event.roomCode || '').trim().toUpperCase();
   if (eventRoomCode && eventRoomCode !== state.roomCode) return;
-  void handleRemoteMeetingEnded();
+  void handleRemoteMeetingEnded(event);
 }
 
 async function leaveMeeting(endForEveryone = false) {
@@ -2935,6 +3253,7 @@ function bindEvents() {
   document.querySelectorAll('[data-reaction]').forEach((button) => button.addEventListener('click', () => handleReaction(button.dataset.reaction)));
   document.querySelector('[data-raise-hand]')?.addEventListener('click', toggleRaiseHand);
   document.querySelector('[data-stop-presentation]')?.addEventListener('click', handleStopPresentation);
+  document.querySelector('[data-presentation-retry]')?.addEventListener('click', () => { void retryPresentationPlayback(); });
   document.querySelector('[data-recording-control]')?.addEventListener('click', handleRecordingToggle);
   document.querySelectorAll('[data-save-recording]').forEach((button) => button.addEventListener('click', saveReadyRecording));
   panel.addEventListener('click', (event) => {
@@ -3006,18 +3325,30 @@ async function initialize() {
   const sessionResult = await protectPage();
   if (!sessionResult.success || !sessionResult.session) return;
 
+  if (!state.roomCode) {
+    redirectToJoin();
+    return;
+  }
+  state.displayName = getStoredDisplayName();
+  if (!isValidMeetingDisplayName(state.displayName)) {
+    redirectToJoin();
+    return;
+  }
+
   meetingContext = meetingService.getCurrentParticipantContext(getRoomCode());
+  state.meetingStatus = meetingContext.meeting?.status || state.meetingStatus;
+  state.endedReason = meetingContext.meeting?.endedReason || state.endedReason;
+  if (meetingContext.meeting?.hasHadAttendee === true) state.hasHadAttendee = true;
   if ([MEETING_STATUSES.ENDING, MEETING_STATUSES.ENDED].includes(meetingContext.meeting?.status)) {
     state.meetingTitle = meetingContext.meeting.title || state.meetingTitle;
     state.hostName = meetingContext.meeting.hostName || state.hostName;
     state.startedAt = meetingContext.meeting.startedAt || state.startedAt;
     page.dataset.meetingState = 'ended';
-    showMeetingEndedModal();
+    showMeetingEndedModal(meetingContext.meeting);
     return;
   }
   role = meetingContext.role || PARTICIPANT_ROLES.MEMBER;
   state.role = role;
-  state.displayName = sessionResult.user.displayName;
   state.meetingId = meetingContext.meeting?.id || getStoredJoinedMeeting()?.id || state.meetingId;
   try {
     const storedParticipant = JSON.parse(readSession('flashMeeting.joinedParticipant') || 'null');
@@ -3029,10 +3360,10 @@ async function initialize() {
   } catch {
     // The realtime token remains the source of truth for participant identity.
   }
-  state.hostName = meetingContext.meeting?.hostName || 'Chủ phòng';
+  state.hostName = meetingContext.meeting?.hostName || '';
   state.participants = createParticipants();
   if (!state.userSelectedView && getParticipants().length > 1) state.view = 'grid';
-  state.waitingParticipants = createWaitingParticipants();
+  state.waitingParticipants = [];
   state.unsubscribeMeetingEvents = subscribeMeetingEvents(handleMeetingEvent);
   state.unsubscribeScreenShare = subscribeScreenShare(handleScreenShareState);
   await initializeLocalMedia();
@@ -3051,6 +3382,11 @@ async function initialize() {
   state.timer = window.setInterval(updateDuration, 1000);
   const realtimeResult = await initializeRealtimeMeeting();
   if (!realtimeResult.success) {
+    if (state.meetingEndHandled) return;
+    if (realtimeResult.code === 'INVALID_DISPLAY_NAME') {
+      redirectToJoin();
+      return;
+    }
     page.dataset.meetingState = 'error';
     showToast(getRealtimeErrorMessage(realtimeResult.code));
     modal.error({
@@ -3061,18 +3397,7 @@ async function initialize() {
     });
     return;
   }
-  startConnectionMock();
-  startActiveSpeakerMock();
-  if (isRemoteShareScenario()) {
-    const presenter = findParticipant('participant-1');
-    startMockRemoteShare({ id: presenter.id, name: presenter.name });
-  }
-  if (scenario === 'meeting-ended' || scenario === 'removed') {
-    page.dataset.meetingState = scenario === 'removed' ? 'removed' : 'meeting-ended';
-    showToast(scenario === 'removed' ? 'Bạn đã được rời khỏi cuộc họp.' : 'Cuộc họp đã kết thúc.');
-  } else {
-    page.dataset.meetingState = 'normal';
-  }
+  page.dataset.meetingState = 'normal';
 }
 
 registerAuthExpiryCleanup(cleanup);

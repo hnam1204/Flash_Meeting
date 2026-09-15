@@ -1,10 +1,14 @@
+import { validateMeetingDisplayName } from './display-name.js';
+
 export function appendChatMessage(listElement, message) {
   if (!listElement || !message) return;
+  const author = validateMeetingDisplayName(message.author);
+  if (!author.valid) return;
 
   const item = document.createElement('li');
   item.className = 'chat-message';
-  item.textContent = `${message.author}: ${message.content}`;
+  item.textContent = `${author.value}: ${message.content}`;
   listElement.append(item);
 }
 
-// TODO Phase 8: persist text messages through Supabase and subscribe via Realtime.
+// Message persistence and Realtime subscription are owned by meeting-realtime.js.

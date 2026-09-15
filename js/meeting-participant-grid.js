@@ -1,5 +1,6 @@
 import { createIcon, renderIcons, setIcon } from './ui/icons.js';
 import { getParticipantRoleLabel, PARTICIPANT_ROLES } from './meeting-participants.js';
+import { validateMeetingDisplayName } from './display-name.js';
 
 export const PARTICIPANTS_PER_PAGE = 5;
 
@@ -193,6 +194,12 @@ export function createParticipantGridController({
     const remoteVideo = !participant.local && hasRemoteVideo(participant);
     const showVideo = localVideo || remoteVideo;
     const cameraTrack = getCameraTrack(participant);
+    const displayName = validateMeetingDisplayName(participant?.name);
+    if (!displayName.valid) {
+      tile.hidden = true;
+      return;
+    }
+    tile.hidden = false;
 
     entry.participant = participant;
     tile.dataset.participantKey = key;
@@ -202,7 +209,7 @@ export function createParticipantGridController({
     tile.classList.toggle('has-reaction', Boolean(participant.reaction && Number(participant.reactionExpiresAt) > Date.now()));
     tile.classList.toggle('has-camera', showVideo);
     tile.classList.toggle('camera-off', !participant.cameraEnabled);
-    tile.setAttribute('aria-label', `${participant.name || 'Gmail user'}, micro ${participant.microphoneEnabled ? 'đang bật' : 'đang tắt'}, camera ${participant.cameraEnabled ? 'đang bật' : 'đang tắt'}${participant.local ? ', Bạn' : ''}`);
+    tile.setAttribute('aria-label', `${displayName.value}, micro ${participant.microphoneEnabled ? 'đang bật' : 'đang tắt'}, camera ${participant.cameraEnabled ? 'đang bật' : 'đang tắt'}${participant.local ? ', Bạn' : ''}`);
 
     entry.localBadge.hidden = !participant.local;
     const hasRoleBadge = [PARTICIPANT_ROLES.HOST, PARTICIPANT_ROLES.CO_HOST].includes(participant.role);
@@ -210,7 +217,7 @@ export function createParticipantGridController({
     entry.roleBadge.textContent = hasRoleBadge ? getParticipantRoleLabel(participant.role) : '';
     entry.handBadge.hidden = !participant.handRaised;
     entry.presenterBadge.hidden = presenterId !== key && presenterId !== String(participant.id || '');
-    entry.name.textContent = participant.local ? `${participant.name || 'Gmail user'} (Bạn)` : participant.name || 'Gmail user';
+    entry.name.textContent = participant.local ? `${displayName.value} (Bạn)` : displayName.value;
 
     setParticipantIcon(
       entry.microphoneState,
@@ -224,7 +231,7 @@ export function createParticipantGridController({
     );
     entry.microphoneState.classList.toggle('is-off', !participant.microphoneEnabled);
     entry.cameraState.classList.toggle('is-off', !participant.cameraEnabled);
-    entry.avatar.textContent = getInitials(participant.name);
+    entry.avatar.textContent = getInitials(displayName.value);
     entry.visual.classList.toggle('camera-off', !participant.cameraEnabled || !showVideo);
     entry.video.classList.toggle('is-local-video', Boolean(participant.local));
     entry.video.classList.toggle('is-remote-video', !participant.local);
@@ -292,10 +299,13 @@ export function createParticipantGridController({
   function updatePagination(total, start, visible, mode) {
     const hasMultiplePages = pageCount > 1;
     const showStrip = mode === 'presentation' || (mode === 'speaker' && total > 1);
+    const stripItems = mode === 'grid' ? [] : showStripItems(mode, visible);
     if (paginationWrap) {
       paginationWrap.hidden = mode === 'grid' ? !hasMultiplePages : !showStrip;
       paginationWrap.dataset.paginationMode = mode;
+      paginationWrap.classList.toggle('has-pagination', hasMultiplePages);
     }
+    if (filmstripElement) filmstripElement.dataset.count = String(stripItems.length);
     if (filmstripElement && mode === 'grid') {
       filmstripElement.replaceChildren(...(hasMultiplePages ? [ensurePaginationLabel()] : []));
       filmstripElement.hidden = !hasMultiplePages;

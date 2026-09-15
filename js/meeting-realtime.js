@@ -1,5 +1,6 @@
 import { configState } from './config.js';
 import { authService } from './auth-service.js';
+import { validateMeetingDisplayName } from './display-name.js';
 
 const SESSION_STORAGE_KEY = 'flashMeeting.meetingSessionId';
 const HEARTBEAT_INTERVAL_MS = 15_000;
@@ -36,6 +37,7 @@ export function getMeetingSessionId() {
 
 export function normalizeRealtimeParticipant(value) {
   if (!value || typeof value !== 'object') return null;
+  const nameValidation = validateMeetingDisplayName(value.name || value.displayName || value.display_name);
   return {
     id: String(value.id || '').trim(),
     identity: String(value.identity || value.livekitIdentity || value.livekit_identity || '').trim(),
@@ -44,7 +46,7 @@ export function normalizeRealtimeParticipant(value) {
     userId: String(value.userId || value.user_id || '').trim(),
     sessionId: String(value.sessionId || value.session_id || '').trim(),
     livekitIdentity: String(value.livekitIdentity || value.livekit_identity || '').trim(),
-    name: String(value.name || value.displayName || value.display_name || 'Gmail user').trim() || 'Gmail user',
+    name: nameValidation.valid ? nameValidation.value : '',
     role: String(value.role || 'member').trim(),
     roleFromMetadata: Boolean(value.roleFromMetadata),
     status: String(value.status || 'admitted').trim(),
@@ -71,11 +73,13 @@ export function normalizeRealtimeMessage(value) {
   if (!value || typeof value !== 'object') return null;
   const content = String(value.content || '').trim().slice(0, MAX_MESSAGE_LENGTH);
   if (!content) return null;
+  const authorValidation = validateMeetingDisplayName(value.author || value.senderDisplayName || value.sender_display_name);
+  if (!authorValidation.valid) return null;
   return {
     id: String(value.id || '').trim(),
     meetingId: String(value.meetingId || value.meeting_id || '').trim(),
     senderUserId: String(value.senderUserId || value.sender_user_id || '').trim(),
-    author: String(value.author || value.senderDisplayName || value.sender_display_name || 'Gmail user').trim() || 'Gmail user',
+    author: authorValidation.value,
     content,
     createdAt: value.createdAt || value.created_at || null
   };
@@ -95,7 +99,7 @@ function errorCode(error, fallback = 'REALTIME_UNAVAILABLE') {
     'MEETING_LOCKED', 'ROOM_FULL', 'USER_BLOCKED', 'PERMISSION_DENIED',
     'PARTICIPANT_NOT_FOUND', 'WAITING_ROOM_REQUIRED', 'SCREEN_SHARE_ACTIVE',
     'SCREEN_SHARE_NOT_ALLOWED',
-    'MEETING_NOT_ACTIVE', 'INVALID_STATE'
+    'MEETING_NOT_ACTIVE', 'INVALID_STATE', 'INVALID_DISPLAY_NAME', 'RATE_LIMITED'
   ];
   return known.find((code) => message.includes(code)) || fallback;
 }
@@ -104,24 +108,26 @@ function normalizeMeetingUpdate(value) {
   if (!value || typeof value !== 'object') return null;
   return {
     id: value.id,
-    roomCode: value.room_code,
+    roomCode: value.roomCode ?? value.room_code,
     title: value.title,
-    hostId: value.host_id,
+    hostId: value.hostId ?? value.host_id,
     status: value.status,
-    maxParticipants: value.max_participants,
-    waitingRoomEnabled: value.waiting_room_enabled,
-    participantCount: value.participant_count,
-    createdAt: value.created_at,
-    startedAt: value.started_at,
-    endedAt: value.ended_at
+    maxParticipants: value.maxParticipants ?? value.max_participants,
+    waitingRoomEnabled: value.waitingRoomEnabled ?? value.waiting_room_enabled,
+    participantCount: value.participantCount ?? value.participant_count,
+    createdAt: value.createdAt ?? value.created_at,
+    startedAt: value.startedAt ?? value.started_at,
+    endedAt: value.endedAt ?? value.ended_at,
+    endedReason: value.endedReason ?? value.ended_reason,
+    hasHadAttendee: value.hasHadAttendee === true || value.has_had_attendee === true
   };
 }
 
-export async function requestLiveKitToken(roomCode, sessionId = getMeetingSessionId()) {
+export async function requestLiveKitToken(roomCode, sessionId = getMeetingSessionId(), displayName = '') {
   const supabase = await getSupabase();
   if (!supabase) return { success: false, code: 'CONFIGURATION_ERROR' };
   const { data, error } = await supabase.functions.invoke('livekit-token', {
-    body: { roomCode, sessionId }
+    body: { roomCode, sessionId, displayName }
   });
   if (error) {
     let responseBody = error?.context?.body;
@@ -139,13 +145,15 @@ export async function requestLiveKitToken(roomCode, sessionId = getMeetingSessio
 
 export function createMeetingRealtimeController({
   meetingId,
+  roomCode = '',
   sessionId = getMeetingSessionId(),
   onParticipants,
   onParticipant,
   onMessage,
   onMeeting,
   onConnection,
-  onError
+  onError,
+  displayName = ''
 } = {}) {
   let supabase = null;
   let channel = null;
@@ -194,9 +202,12 @@ export function createMeetingRealtimeController({
       return { success: false, code: 'CONFIGURATION_ERROR' };
     }
 
-    const [participantsResult, messagesResult] = await Promise.all([
+    const [participantsResult, messagesResult, meetingResult] = await Promise.all([
       supabase.rpc('flash_meeting_get_participants', { p_meeting_id: meetingId }),
-      supabase.rpc('flash_meeting_get_messages', { p_meeting_id: meetingId, p_limit: 100 })
+      supabase.rpc('flash_meeting_get_messages', { p_meeting_id: meetingId, p_limit: 100 }),
+      roomCode
+        ? supabase.rpc('flash_meeting_get_meeting', { p_room_code: roomCode })
+        : Promise.resolve({ data: null, error: null })
     ]);
     if (participantsResult.error) {
       reportError(participantsResult.error, 'PARTICIPANTS_LOAD_FAILED');
@@ -216,6 +227,12 @@ export function createMeetingRealtimeController({
     messages.forEach((message) => messageIds.add(message.id));
     onParticipants?.(participants);
     messages.forEach((message) => onMessage?.(message));
+    if (meetingResult.error) {
+      reportError(meetingResult.error, 'MEETING_REFRESH_FAILED');
+    } else {
+      onMeeting?.(normalizeMeetingUpdate(parseRpcPayload(meetingResult.data)));
+    }
+    if (closed) return { success: false, code: 'CLOSED' };
 
     channel = supabase.channel(`flash-meeting:${meetingId}:${sessionId}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'meeting_participants', filter: `meeting_id=eq.${meetingId}` }, (payload) => {
@@ -273,12 +290,14 @@ export function createMeetingRealtimeController({
     if (!supabase || closed) return { success: false, code: 'CLOSED' };
     const normalized = String(content || '').trim().slice(0, MAX_MESSAGE_LENGTH);
     if (!normalized) return { success: false, code: 'INVALID_MESSAGE' };
+    const senderName = validateMeetingDisplayName(displayName);
+    if (!senderName.valid) return { success: false, code: 'INVALID_DISPLAY_NAME' };
     const { data, error } = await supabase
       .from('meeting_messages')
       .insert({
         meeting_id: meetingId,
         sender_user_id: authService.getSession()?.id,
-        sender_display_name: authService.getSession()?.displayName || 'Gmail user',
+        sender_display_name: senderName.value,
         content: normalized
       })
       .select('id, meeting_id, sender_user_id, sender_display_name, content, created_at')

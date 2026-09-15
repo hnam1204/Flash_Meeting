@@ -4,6 +4,12 @@ import { getPageUrl, isLikelyRoomCode, normalizeRoomCode, setStatus } from './ut
 import { redirectToLogin } from './auth-guard.js';
 import { modal } from './ui/modal-manager.js';
 import { renderIcons } from './ui/icons.js';
+import {
+  DISPLAY_NAME_MAX_LENGTH,
+  DISPLAY_NAME_MIN_LENGTH,
+  resolveDefaultDisplayName,
+  validateMeetingDisplayName
+} from './display-name.js';
 
 const JOIN_STATES = Object.freeze({
   INITIALIZING: 'initializing',
@@ -14,8 +20,6 @@ const JOIN_STATES = Object.freeze({
   ERROR: 'error'
 });
 
-const DISPLAY_NAME_MIN_LENGTH = 2;
-const DISPLAY_NAME_MAX_LENGTH = 50;
 const REDIRECT_DELAY = 420;
 
 const page = document.body;
@@ -26,6 +30,8 @@ const roomCodeInput = form?.elements.roomCode;
 const displayNameInput = form?.elements.displayName;
 const submitButton = document.querySelector('[data-join-submit]');
 const submitLabel = document.querySelector('[data-join-submit-label]');
+const accountRow = document.querySelector('[data-account-row]');
+const accountEmail = document.querySelector('[data-account-email]');
 let roomParamState = { hasParam: false, valid: true, roomCode: '' };
 
 renderIcons();
@@ -70,8 +76,7 @@ function clearFieldErrors() {
 }
 
 function isOffline() {
-  const scenario = new URLSearchParams(window.location.search).get('mock')?.toLowerCase();
-  return scenario === 'offline' || navigator.onLine === false;
+  return navigator.onLine === false;
 }
 
 function updateOfflineState() {
@@ -104,25 +109,23 @@ function validateForm() {
     return { success: false };
   }
 
-  const rawDisplayName = String(displayNameInput?.value ?? '');
-  const displayName = rawDisplayName.trim();
-  if (rawDisplayName.length > 0 && !displayName) {
-    setFieldError('displayName', 'Tên hiển thị không hợp lệ.');
-    displayNameInput.focus();
-    return { success: false };
-  }
-  if (displayName && (displayName.length < DISPLAY_NAME_MIN_LENGTH || displayName.length > DISPLAY_NAME_MAX_LENGTH)) {
-    setFieldError('displayName', `Tên hiển thị phải có từ ${DISPLAY_NAME_MIN_LENGTH} đến ${DISPLAY_NAME_MAX_LENGTH} ký tự.`);
+  const displayNameValidation = validateMeetingDisplayName(displayNameInput?.value);
+  if (!displayNameValidation.valid) {
+    const message = displayNameValidation.code === 'EMPTY'
+      ? 'Vui lòng nhập tên hiển thị.'
+      : displayNameValidation.code === 'LENGTH'
+        ? `Tên hiển thị phải có từ ${DISPLAY_NAME_MIN_LENGTH} đến ${DISPLAY_NAME_MAX_LENGTH} ký tự.`
+        : 'Tên hiển thị không hợp lệ. Vui lòng nhập tên từ 2 đến 50 ký tự.';
+    setFieldError('displayName', message);
     displayNameInput.focus();
     return { success: false };
   }
 
-  const session = authService.getSession();
   return {
     success: true,
     input: {
       roomCode,
-      displayName: displayName || session?.displayName || 'Khách tham gia'
+      displayName: displayNameValidation.value
     }
   };
 }
@@ -138,6 +141,7 @@ function getErrorMessage(code) {
     [JOIN_MEETING_ERROR_CODES.MEETING_NOT_STARTED]: 'Chủ phòng chưa bắt đầu cuộc họp. Vui lòng thử lại sau.',
     [JOIN_MEETING_ERROR_CODES.ROOM_FULL]: 'Cuộc họp đã đủ người tham gia.',
     [JOIN_MEETING_ERROR_CODES.USER_BLOCKED]: 'Bạn không thể tham gia cuộc họp này.',
+    [JOIN_MEETING_ERROR_CODES.INVALID_DISPLAY_NAME]: 'Tên hiển thị không hợp lệ. Vui lòng nhập tên từ 2 đến 50 ký tự.',
     [JOIN_MEETING_ERROR_CODES.NETWORK_ERROR]: 'Không có kết nối Internet. Vui lòng thử lại.',
     [JOIN_MEETING_ERROR_CODES.RATE_LIMITED]: 'Bạn thao tác quá nhanh. Vui lòng thử lại sau.',
     [JOIN_MEETING_ERROR_CODES.SERVICE_UNAVAILABLE]: 'Dịch vụ tham gia cuộc họp tạm thời chưa sẵn sàng.',
@@ -174,7 +178,17 @@ function prefillFromUrl() {
   }
 
   const session = authService.getSession();
-  if (session?.displayName && !displayNameInput.value) displayNameInput.value = session.displayName;
+  if (session) {
+    const sessionName = validateMeetingDisplayName(session.displayName);
+    const displayName = sessionName.valid
+      ? sessionName.value
+      : resolveDefaultDisplayName({ googleUser: session, email: session.email });
+    if (displayName && !displayNameInput.value) displayNameInput.value = displayName;
+    if (accountRow && session.email) {
+      accountRow.hidden = false;
+      accountEmail.textContent = session.email;
+    }
+  }
 }
 
 function retryJoin() {
@@ -186,6 +200,8 @@ async function initializeJoinPage() {
   setJoinState(JOIN_STATES.INITIALIZING);
   setFormDisabled(true);
   form.setAttribute('aria-busy', 'true');
+  prefillFromUrl();
+  await authService.bootstrapSession().catch(() => null);
   prefillFromUrl();
   await wait(180);
   setFormDisabled(false);

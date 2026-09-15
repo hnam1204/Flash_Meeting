@@ -9,7 +9,6 @@ export const SCREEN_SHARE_STATES = Object.freeze({
 let screenStream = null;
 let screenTrack = null;
 let screenSettings = null;
-let remotePresenter = null;
 let shareStatus = SCREEN_SHARE_STATES.IDLE;
 let startInProgress = false;
 let stopInProgress = false;
@@ -32,8 +31,8 @@ function getTrackSettings(track) {
 
 function getStateSnapshot(reason = 'updated') {
   return {
-    active: Boolean(screenStream || remotePresenter),
-    presenterId: screenStream ? 'local' : remotePresenter?.id ?? null,
+    active: Boolean(screenStream),
+    presenterId: screenStream ? 'local' : null,
     isLocalPresenter: Boolean(screenStream),
     stream: screenStream,
     track: screenTrack,
@@ -104,7 +103,7 @@ function cleanupLocalShare(reason = 'stopped', shouldNotify = true) {
   detachScreenTrackListener(track);
   stopStreamTracks(stream);
 
-  shareStatus = remotePresenter ? SCREEN_SHARE_STATES.LIVE : SCREEN_SHARE_STATES.IDLE;
+  shareStatus = SCREEN_SHARE_STATES.IDLE;
   stopInProgress = false;
   if (shouldNotify) notify(reason);
   return { stopped: true };
@@ -149,7 +148,6 @@ export function subscribeScreenShare(listener) {
 
 export async function startScreenShare() {
   if (screenStream || startInProgress) return { started: false, reason: 'ALREADY_ACTIVE' };
-  if (remotePresenter) return { started: false, reason: 'REMOTE_ACTIVE' };
   if (!isScreenShareSupported()) return { started: false, reason: 'UNSUPPORTED' };
 
   startInProgress = true;
@@ -195,33 +193,16 @@ export async function startScreenShare() {
 
 export function stopScreenShare({ source = 'app' } = {}) {
   if (!screenStream) {
-    return { stopped: false, reason: remotePresenter ? 'NOT_LOCAL_PRESENTER' : 'NOT_ACTIVE' };
+    return { stopped: false, reason: 'NOT_ACTIVE' };
   }
   return cleanupLocalShare(source === 'browser' ? 'browser-stopped' : 'stopped');
 }
 
-export function startMockRemoteShare({ id, name } = {}) {
-  if (screenStream || remotePresenter || startInProgress) return { started: false, reason: 'ALREADY_ACTIVE' };
-  remotePresenter = { id: String(id || 'participant-1'), name: String(name || 'Minh Anh') };
-  shareStatus = SCREEN_SHARE_STATES.LIVE;
-  notify('remote-started');
-  return { started: true };
-}
-
-export function stopMockRemoteShare() {
-  if (!remotePresenter) return { stopped: false, reason: 'NOT_ACTIVE' };
-  remotePresenter = null;
-  shareStatus = SCREEN_SHARE_STATES.IDLE;
-  notify('remote-stopped');
-  return { stopped: true };
-}
-
 export function cleanupScreenShare() {
   startRequestId += 1;
-  const hadState = Boolean(screenStream || remotePresenter);
+  const hadState = Boolean(screenStream);
   const wasRequesting = startInProgress || shareStatus === SCREEN_SHARE_STATES.REQUESTING;
   cleanupLocalShare('cleanup', false);
-  remotePresenter = null;
   shareStatus = SCREEN_SHARE_STATES.IDLE;
   if (hadState || wasRequesting) notify('cleanup');
 }

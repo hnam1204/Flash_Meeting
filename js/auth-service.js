@@ -11,8 +11,8 @@ import {
   markOAuthLoginPending,
   resolveAuthSession
 } from './auth-session.js';
+import { isValidMeetingDisplayName, resolveDefaultDisplayName } from './display-name.js';
 
-export const MOCK_USER_ID = 'user-demo-001';
 export const AUTH_NEXT_ROUTE_KEY = 'flashMeeting.auth.next';
 
 export const AUTH_ERROR_CODES = Object.freeze({
@@ -42,10 +42,6 @@ const VALID_NEXT_ROUTES = Object.freeze([
 let supabasePromise;
 let currentSession = null;
 let currentProfile = null;
-
-function getMockScenario() {
-  return String(new URLSearchParams(window.location.search).get('mock') || '').toLowerCase();
-}
 
 function readStorage(key) {
   try {
@@ -101,25 +97,6 @@ function mapSupabaseError(error, fallbackCode = AUTH_ERROR_CODES.GOOGLE_OAUTH_ER
   return fallbackCode;
 }
 
-function normalizeDisplayName(value, fallback = 'Gmail user') {
-  const displayName = String(value ?? '').trim().replace(/\s+/g, ' ');
-  if (displayName.length >= 2) return displayName.slice(0, 50);
-  return fallback;
-}
-
-function getGmailLocalPart(email) {
-  const localPart = String(email ?? '').trim().split('@')[0];
-  return normalizeDisplayName(localPart, 'Gmail user');
-}
-
-function getGoogleDisplayName(user) {
-  const metadata = user?.user_metadata || {};
-  return normalizeDisplayName(
-    metadata.full_name || metadata.name || getGmailLocalPart(user?.email),
-    'Gmail user'
-  );
-}
-
 function getSafeAvatarUrl(value) {
   const rawUrl = String(value ?? '').trim();
   if (!rawUrl) return '';
@@ -146,10 +123,7 @@ function isGoogleIdentity(user) {
 function toApplicationUser(user, profile = null) {
   const metadata = user?.user_metadata || {};
   const email = String(user?.email || '').trim().toLowerCase();
-  const displayName = normalizeDisplayName(
-    profile?.display_name || getGoogleDisplayName(user),
-    getGmailLocalPart(email)
-  );
+  const displayName = resolveDefaultDisplayName({ profile, googleUser: user, email });
   const avatarUrl = getSafeAvatarUrl(
     profile?.avatar_url || metadata.avatar_url || metadata.picture
   );
@@ -185,8 +159,7 @@ function clearAppSession({ preserveNextRoute = false, clearAuthMetadata = true }
     'flashMeeting.joinedParticipant',
     'flashMeeting.createdMeeting',
     'flashMeeting.waitingRequest',
-    'flashMeeting.leaveResult',
-    'flashMeeting.startedAt'
+    'flashMeeting.leaveResult'
   ]) removeStorage(key);
 }
 
@@ -197,7 +170,7 @@ export async function syncCurrentGoogleProfile(user) {
   }
 
   const metadata = user.user_metadata || {};
-  const displayName = getGoogleDisplayName(user);
+  const displayName = resolveDefaultDisplayName({ googleUser: user, email: user.email });
   const avatarUrl = getSafeAvatarUrl(metadata.avatar_url || metadata.picture);
   const { data: existingProfile, error: selectError } = await supabase
     .from('profiles')
@@ -210,7 +183,9 @@ export async function syncCurrentGoogleProfile(user) {
   }
 
   const updates = {};
-  if (displayName && existingProfile?.display_name !== displayName) updates.display_name = displayName;
+  if (!isValidMeetingDisplayName(existingProfile?.display_name) && displayName) {
+    updates.display_name = displayName;
+  }
   if (avatarUrl && existingProfile?.avatar_url !== avatarUrl) updates.avatar_url = avatarUrl;
 
   let profile = existingProfile;
@@ -311,9 +286,6 @@ export async function bootstrapSession() {
 export async function signInWithGoogle() {
   const supabase = await loadSupabaseClient();
   if (!supabase) return { success: false, code: AUTH_ERROR_CODES.CONFIGURATION_ERROR };
-  if (['network', 'network-error', 'offline'].includes(getMockScenario())) {
-    return { success: false, code: AUTH_ERROR_CODES.NETWORK_ERROR };
-  }
 
   const redirectTo = new URL(getPageUrl('login.html'), window.location.href).toString();
   try {
